@@ -244,29 +244,29 @@ export class CameraBoundsController {
     shakeAmp: number;
   } {
     if (!racer) {
-      return { fov: 68, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
+      return { fov: 66, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
     }
     const boost = racer.boost;
     if (boost === 'dragon') {
       // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi camera xa + nâng cao để thấy trọn rồng, nhân vật và đường đua
-      return { fov: 84, distOffset: 9.2, heightOffset: 4.4, shakeAmp: 0.025 };
+      return { fov: 83, distOffset: 9.6, heightOffset: 4.5, shakeAmp: 0.02 };
     }
     if (boost === 'rocket') {
       // Tên lửa dài & phun lửa lớn: lùi camera thoáng hơn để không bị sát mặt
-      return { fov: 82, distOffset: 5.4, heightOffset: 2.5, shakeAmp: 0.02 };
+      return { fov: 80, distOffset: 5.8, heightOffset: 2.6, shakeAmp: 0.016 };
     }
     if (boost === 'jetpack') {
-      return { fov: 79, distOffset: 3.6, heightOffset: 1.7, shakeAmp: 0.012 };
+      return { fov: 77, distOffset: 3.8, heightOffset: 1.7, shakeAmp: 0.01 };
     }
     if (boost === 'sprint' || boost === 'join' || boost === 'chat') {
-      return { fov: 76, distOffset: 2.3, heightOffset: 0.85, shakeAmp: 0.008 };
+      return { fov: 74, distOffset: 2.4, heightOffset: 0.9, shakeAmp: 0.006 };
     }
     if (racer.speed < 14 && racer.speed > 0.5) {
       // SLOW
-      return { fov: 65, distOffset: -0.4, heightOffset: -0.1, shakeAmp: 0 };
+      return { fov: 64, distOffset: -0.4, heightOffset: -0.1, shakeAmp: 0 };
     }
     // NORMAL SPEED
-    return { fov: 68, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
+    return { fov: 66, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
   }
 }
 
@@ -355,10 +355,10 @@ export class ChaseCameraMode {
       lat: latBlend,
       speed: primary.speed,
       orbitAngle: 0, // 0 rad = Phía sau nhân vật
-      radius: bounds.clampDistance(8.2 + speedResp.distOffset),
-      height: bounds.clampHeight(4.1 + speedResp.heightOffset),
+      radius: bounds.clampDistance(10.8 + speedResp.distOffset),
+      height: bounds.clampHeight(5.4 + speedResp.heightOffset),
       curveBiasLat: curveBias,
-      lookAhead: 3.4,
+      lookAhead: 3.6,
       lookY: getCharacterFollowLookY(primary),
       fov: bounds.clampFov(speedResp.fov),
       panSpeed: 7.2,
@@ -408,14 +408,14 @@ export class FrontTrackingCameraMode {
       lat: racer.x,
       speed: racer.speed,
       orbitAngle: subtleAngle,
-      radius: bounds.clampDistance(8.2 + speedResp.distOffset * 1.05),
-      height: bounds.clampHeight(3.9 + speedResp.heightOffset * 0.95),
+      radius: bounds.clampDistance(10.8 + speedResp.distOffset * 1.05),
+      height: bounds.clampHeight(5.0 + speedResp.heightOffset * 0.92),
       curveBiasLat: 0,
       lookAhead: -0.4,
       lookY: getCharacterFollowLookY(racer) - 0.1,
-      fov: bounds.clampFov(Math.min(84, speedResp.fov)),
+      fov: bounds.clampFov(Math.min(83, speedResp.fov)),
       panSpeed: 8.0,
-      shakeAmp: speedResp.shakeAmp * 0.5,
+      shakeAmp: speedResp.shakeAmp * 0.45,
     };
   }
 }
@@ -475,14 +475,14 @@ export class SideTrackingCameraMode {
       lat: focusLat,
       speed: primary.speed,
       orbitAngle: sideOrbitAngle,
-      radius: bounds.clampDistance(8.4 + extraRadius + speedResp.distOffset * 0.9),
-      height: bounds.clampHeight(3.8 + speedResp.heightOffset * 0.85),
+      radius: bounds.clampDistance(11.2 + extraRadius + speedResp.distOffset * 0.95),
+      height: bounds.clampHeight(5.0 + speedResp.heightOffset * 0.88),
       curveBiasLat: 0,
       lookAhead: 0.9,
       lookY: getCharacterFollowLookY(primary) - 0.1,
-      fov: bounds.clampFov(Math.min(82, speedResp.fov)),
+      fov: bounds.clampFov(Math.min(81, speedResp.fov)),
       panSpeed: 7.8,
-      shakeAmp: speedResp.shakeAmp * 0.4,
+      shakeAmp: speedResp.shakeAmp * 0.35,
     };
   }
 }
@@ -574,12 +574,12 @@ export class FinishCamera {
       lat: leader ? leader.x : 0,
       speed: leader ? leader.speed : 0,
       orbitAngle: 0.42, // Góc chéo 24 độ thấy rõ nhân vật băng qua vạch kẻ caro về đích
-      radius: bounds.clampDistance(7.6),
-      height: bounds.clampHeight(3.8),
+      radius: bounds.clampDistance(10.5),
+      height: bounds.clampHeight(5.0),
       curveBiasLat: 1.5,
       lookAhead: 1.2,
       lookY: getCharacterFollowLookY(leader),
-      fov: bounds.clampFov(72),
+      fov: bounds.clampFov(68),
       panSpeed: 6.5,
       shakeAmp: 0,
     };
@@ -935,28 +935,28 @@ export class CameraDirector {
       const s0 = sampleCircuit(0, focusLat);
       const gentleSway = Math.sin(tSec * 0.45) * 1.4;
       rawPose = {
-        posX: s0.x - s0.tx * 7.8 + s0.rx * gentleSway,
-        posY: 3.85,
-        posZ: s0.z - s0.tz * 7.8 + s0.rz * gentleSway,
+        posX: s0.x - s0.tx * 10.4 + s0.rx * gentleSway,
+        posY: 5.0,
+        posZ: s0.z - s0.tz * 10.4 + s0.rz * gentleSway,
         lookX: s0.x + s0.tx * 2.8,
         lookY: 2.1,
         lookZ: s0.z + s0.tz * 2.8,
-        fov: 68,
+        fov: 66,
         transitionSpeed: 4.5,
       };
     } else if (this.state === 'COUNTDOWN') {
-      // COUNTDOWN: Camera tiến nhẹ gần nhân vật (6.2m, cao 3.3m), tạo cảm giác chuẩn bị bứt tốc xuất phát
+      // COUNTDOWN: Camera tiến nhẹ gần nhân vật (8.8m, cao 4.4m), tạo cảm giác chuẩn bị bứt tốc xuất phát
       this.trackInitialized = false;
       const focusLat = leader ? leader.x * 0.6 : 0;
       const s0 = sampleCircuit(0, focusLat);
       rawPose = {
-        posX: s0.x - s0.tx * 6.2,
-        posY: 3.35,
-        posZ: s0.z - s0.tz * 6.2,
+        posX: s0.x - s0.tx * 8.8,
+        posY: 4.4,
+        posZ: s0.z - s0.tz * 8.8,
         lookX: s0.x + s0.tx * 3.6,
         lookY: 2.1,
         lookZ: s0.z + s0.tz * 3.6,
-        fov: 65,
+        fov: 64,
         transitionSpeed: 5.2,
       };
     } else if (this.state === 'RESULT') {
