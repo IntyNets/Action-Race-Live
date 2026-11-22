@@ -74,6 +74,7 @@ export interface StoredUserProfile {
   petIdx: number | null;
   petName: string;
   petSpeedBonus: number;
+  isFollower?: boolean;
   updatedAt: number;
 }
 
@@ -88,16 +89,34 @@ function resolveUsersFilePath(): string {
 }
 
 let usersStore: Record<string, StoredUserProfile> = {};
+const knownFollowers = new Set<string>();
 try {
   const fp = resolveUsersFilePath();
   if (fs.existsSync(fp)) {
     const raw = JSON.parse(fs.readFileSync(fp, 'utf8'));
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       usersStore = raw;
+      for (const [uid, prof] of Object.entries(usersStore)) {
+        if (prof?.isFollower) {
+          knownFollowers.add(uid);
+          if (prof.username) knownFollowers.add(prof.username);
+        }
+      }
     }
   }
 } catch (err) {
   console.warn('Không đọc được data/users.json, khởi tạo mới:', err);
+}
+
+function markFollower(userId: string) {
+  if (!userId || userId.startsWith('bot_')) return;
+  knownFollowers.add(userId);
+  const existing = usersStore[userId];
+  if (existing && !existing.isFollower) {
+    existing.isFollower = true;
+    existing.updatedAt = Date.now();
+    scheduleSaveUsers();
+  }
 }
 
 let saveUsersTimer: ReturnType<typeof setTimeout> | null = null;
@@ -375,8 +394,12 @@ app.post('/api/users/sync', (req, res) => {
       petIdx,
       petName,
       petSpeedBonus,
+      isFollower: Boolean(item.isFollower || existing?.isFollower || knownFollowers.has(userId)),
       updatedAt: Date.now(),
     };
+    if (usersStore[userId].isFollower) {
+      knownFollowers.add(userId);
+    }
     updated++;
   }
 
@@ -413,6 +436,18 @@ const avatarOf = (data: any) =>
       data?.profilePictureUrl ||
       '',
   );
+// Kiểm tra người xem đã Follow kênh chưa (từ TikTok proto v3 followInfo.followStatus >= 1 hoặc followRole >= 1 hoặc đã Follow trước đó)
+const isFollowerOf = (data: any, username: string): boolean => {
+  const status = Number(
+    data?.user?.followInfo?.followStatus ??
+      data?.followInfo?.followStatus ??
+      data?.followRole ??
+      0,
+  );
+  const followed = status >= 1 || Boolean(data?.isFollower) || knownFollowers.has(username);
+  if (followed) markFollower(username);
+  return followed;
+};
 
 app.post('/api/tiktok/connect', async (req, res) => {
   const cleanUser = String(req.body?.username || '')
@@ -460,11 +495,14 @@ app.post('/api/tiktok/connect', async (req, res) => {
         owner?.profilePicture?.url?.[0] ||
         '',
     );
+    markFollower(cleanUser);
     broadcastWs('member', {
       userId: cleanUser,
       username: cleanUser,
       nickname: hostNick,
       avatar: hostAvatar,
+      isFollower: true,
+      isHost: true,
       platform: 'tiktok',
       timestamp: Date.now(),
     });
@@ -488,12 +526,14 @@ app.post('/api/tiktok/connect', async (req, res) => {
 
   conn.on(WebcastEvent.CHAT, (data: any) => {
     const username = userOf(data);
+    const isFollower = isFollowerOf(data, username);
     broadcastWs('chat', {
       userId: username,
       username,
       nickname: nickOf(data),
       comment: String(data?.content || data?.comment || '').trim(),
       avatar: avatarOf(data),
+      isFollower,
       platform: 'tiktok',
       timestamp: Date.now(),
     });
@@ -541,11 +581,13 @@ app.post('/api/tiktok/connect', async (req, res) => {
 
   conn.on(WebcastEvent.MEMBER, (data: any) => {
     const username = userOf(data);
+    const isFollower = isFollowerOf(data, username);
     broadcastWs('member', {
       userId: username,
       username,
       nickname: nickOf(data),
       avatar: avatarOf(data),
+      isFollower,
       platform: 'tiktok',
       timestamp: Date.now(),
     });
@@ -553,11 +595,13 @@ app.post('/api/tiktok/connect', async (req, res) => {
 
   conn.on(WebcastEvent.FOLLOW, (data: any) => {
     const username = userOf(data);
+    markFollower(username);
     broadcastWs('follow', {
       userId: username,
       username,
       nickname: nickOf(data),
       avatar: avatarOf(data),
+      isFollower: true,
       platform: 'tiktok',
       timestamp: Date.now(),
     });

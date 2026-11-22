@@ -2485,7 +2485,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 maxZ = CIRCUIT_TRACK.maxZ;
               }
 
-              // Luôn bao quát toàn bộ đoàn đua kèm vùng đệm đường đua rộng rãi
+              // Luôn bao quát toàn bộ đoàn đua với góc nhìn gần và sắc nét hơn trong khung Drone
               const targetCx = (minX + maxX) * 0.5;
               const targetCz = (minZ + maxZ) * 0.5;
               const rawSpan = Math.max(maxX - minX, maxZ - minZ);
@@ -2493,7 +2493,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 CIRCUIT_TRACK.maxX - CIRCUIT_TRACK.minX,
                 CIRCUIT_TRACK.maxZ - CIRCUIT_TRACK.minZ,
               );
-              const targetSpan = Math.max(82, Math.min(fullTrackSpan * 1.15, rawSpan + 46));
+              const targetSpan = Math.max(66, Math.min(fullTrackSpan * 1.04, rawSpan + 32));
               const damp = 1 - Math.exp(-3.8 * dt);
               droneCx += (targetCx - droneCx) * damp;
               droneCz += (targetCz - droneCz) * damp;
@@ -2502,23 +2502,23 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               droneCamera.aspect = pw / Math.max(1, ph);
               droneCamera.updateProjectionMatrix();
 
-              // Góc máy Drone Flycam từ trên cao nghiêng nhẹ nhìn bao quát toàn sân
-              const droneAlt = Math.max(88, droneSpan * 1.18);
-              const swayX = Math.sin(tSec * 0.25) * 4.5;
+              // Góc máy Drone Flycam từ trên cao rõ nét nhìn bao quát toàn sân
+              const droneAlt = Math.max(70, droneSpan * 0.94);
+              const swayX = Math.sin(tSec * 0.25) * 3.8;
               droneCamera.position.set(
                 droneCx + swayX,
                 droneAlt,
-                droneCz - droneSpan * 0.34,
+                droneCz - droneSpan * 0.3,
               );
               droneCamera.lookAt(droneCx, 0, droneCz);
 
-              // Tạm tắt sương mù và phóng to nhẹ nhân vật trong khung Drone để nhìn rõ từ độ cao 100m+
+              // Tạm tắt sương mù và phóng to rõ nhân vật trong khung Drone để nhìn sắc nét từ trên cao
               const savedFog = scene.fog.density;
               scene.fog.density = 0;
               skyDome.position.copy(droneCamera.position);
               for (let k = 0; k < pool.length; k++) {
                 if (pool[k].root.visible) {
-                  pool[k].root.scale.multiplyScalar(2.15);
+                  pool[k].root.scale.multiplyScalar(2.45);
                 }
               }
 
@@ -2532,7 +2532,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
               for (let k = 0; k < pool.length; k++) {
                 if (pool[k].root.visible) {
-                  pool[k].root.scale.divideScalar(2.15);
+                  pool[k].root.scale.divideScalar(2.45);
                 }
               }
               scene.fog.density = savedFog;
@@ -2763,18 +2763,18 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         ))}
       </div>
 
-      {/* Khung Camera Drone Toàn Cảnh (Góc phải bên dưới - Picture-in-Picture) */}
+      {/* Khung Camera Drone Toàn Cảnh (To & Sắc Nét hơn ở Góc phải bên dưới - Picture-in-Picture) */}
       <div
         ref={dronePipRef}
         style={{ display: droneCamOn ? 'block' : 'none' }}
-        className="pointer-events-none absolute bottom-[92px] right-2.5 w-[134px] h-[162px] rounded-xl border-2 border-sky-400/80 shadow-[0_0_24px_rgba(14,165,233,0.45)] overflow-hidden z-20"
+        className="pointer-events-none absolute bottom-[104px] right-2.5 w-[178px] h-[214px] rounded-2xl border-2 border-sky-400/90 shadow-[0_0_28px_rgba(14,165,233,0.55)] overflow-hidden z-20"
       >
         {/* Thanh tiêu đề Drone Live */}
-        <div className="absolute top-0 left-0 right-0 px-1.5 py-0.5 bg-slate-950/80 border-b border-sky-400/40 backdrop-blur-sm flex items-center justify-between">
-          <span className="text-[8.5px] font-black tracking-wide text-sky-300 flex items-center gap-1">
+        <div className="absolute top-0 left-0 right-0 px-2 py-1 bg-slate-950/85 border-b border-sky-400/50 backdrop-blur-sm flex items-center justify-between">
+          <span className="text-[9.5px] font-black tracking-wide text-sky-300 flex items-center gap-1">
             🚁 DRONE TOÀN CẢNH
           </span>
-          <span className="flex items-center gap-0.5 text-[7.5px] font-black text-rose-400">
+          <span className="flex items-center gap-0.5 text-[8px] font-black text-rose-400">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
             LIVE
           </span>
@@ -2792,32 +2792,32 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               className="absolute left-0 top-0 flex flex-col items-center"
             >
               <div
-                className={`flex items-center gap-0.5 px-1 py-[1px] rounded-full border shadow-sm whitespace-nowrap ${
+                className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-full border shadow-md whitespace-nowrap ${
                   t.rank === 1
                     ? 'bg-amber-400/95 border-yellow-100 text-slate-950 font-black scale-105'
                     : t.boost !== 'none'
                       ? 'bg-cyan-400/95 border-white text-slate-950 font-black'
-                      : 'bg-slate-950/80 border-white/40 text-white font-bold'
+                      : 'bg-slate-950/85 border-white/50 text-white font-bold'
                 }`}
               >
                 <span
                   style={{ backgroundColor: t.color }}
-                  className="w-1.5 h-1.5 rounded-full border border-white/80 shrink-0"
+                  className="w-2 h-2 rounded-full border border-white/90 shrink-0"
                 />
-                <span className="text-[7.5px] leading-none">#{t.rank}</span>
-                <span className="text-[7px] leading-none max-w-[42px] truncate">{t.nickname}</span>
+                <span className="text-[8.5px] leading-none">#{t.rank}</span>
+                <span className="text-[8px] leading-none max-w-[54px] truncate">{t.nickname}</span>
               </div>
               <span
                 style={{ backgroundColor: t.rank === 1 ? '#facc15' : t.color }}
-                className="w-1.5 h-1.5 rounded-full border border-white shadow"
+                className="w-2 h-2 rounded-full border border-white shadow"
               />
             </div>
           ))}
         </div>
 
         {/* Chân khung Drone Cam */}
-        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-gradient-to-t from-slate-950/85 to-transparent flex items-center justify-between text-[7.5px] font-bold text-slate-200">
-          <span>TOÀN SÂN</span>
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-slate-950/90 to-transparent flex items-center justify-between text-[8.5px] font-bold text-slate-200">
+          <span>TOÀN SÂN ĐUA</span>
           <span className="text-amber-300">{droneTags.length} TAY ĐUA</span>
         </div>
       </div>

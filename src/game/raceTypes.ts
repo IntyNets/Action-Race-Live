@@ -24,6 +24,7 @@ export interface UserProfile {
   petIdx: number | null;
   petName: string;
   petSpeedBonus: number;
+  isFollower?: boolean;
   updatedAt: number;
 }
 

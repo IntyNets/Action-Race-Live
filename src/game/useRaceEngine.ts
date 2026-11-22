@@ -169,6 +169,8 @@ export function useRaceEngine() {
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
   const savedUsersRef = useRef<Map<string, UserProfile>>(new Map());
   const [savedUsers, setSavedUsers] = useState<UserProfile[]>([]);
+  const followersRef = useRef<Set<string>>(new Set());
+  const lastNeedFollowVoiceAtRef = useRef<number>(0);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({
     connected: false,
     connecting: false,
@@ -196,6 +198,10 @@ export function useRaceEngine() {
       if (u && u.userId) {
         nextMap.set(u.userId, u);
         if (u.username) nextMap.set(u.username, u);
+        if (u.isFollower) {
+          followersRef.current.add(u.userId);
+          if (u.username) followersRef.current.add(u.username);
+        }
       }
     }
     savedUsersRef.current = nextMap;
@@ -237,6 +243,11 @@ export function useRaceEngine() {
           petIdx: r.petIdx,
           petName: r.petName,
           petSpeedBonus: r.petSpeedBonus,
+          isFollower: Boolean(
+            prev?.isFollower ||
+              followersRef.current.has(r.id) ||
+              (r.username && followersRef.current.has(r.username)),
+          ),
           updatedAt: Date.now(),
         };
         savedUsersRef.current.set(profile.userId, profile);
@@ -248,7 +259,7 @@ export function useRaceEngine() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ users: payloadUsers }),
-      }).catch(() => {});
+      }).catch(() => { });
     },
     [],
   );
@@ -329,9 +340,9 @@ export function useRaceEngine() {
       const shirtColor = saved?.shirtColor
         ? saved.shirtColor
         : resolveAvatarColor(bestAvatar, fallbackShirt, (hex) => {
-            const found = racersRef.current.get(userId);
-            if (found) found.shirtColor = hex;
-          });
+          const found = racersRef.current.get(userId);
+          if (found) found.shirtColor = hex;
+        });
 
       const halfW = RACE_CONSTANTS.TRACK_WIDTH / 2 - 2.2;
       const laneX = ((h % 100) / 100) * (halfW * 2) - halfW;
@@ -535,14 +546,14 @@ export function useRaceEngine() {
       try {
         wsRef.current.send(JSON.stringify({ type: 'raceSync', data: snap }));
         return;
-      } catch {}
+      } catch { }
     }
 
     void fetch('/api/race/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(snap),
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const applyRaceSync = useCallback((snap: any) => {
@@ -761,11 +772,11 @@ export function useRaceEngine() {
       liveCommentAccumRef.current = 0;
 
       pushFeed(
-        `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Bình luận bất kỳ hoặc thả tim để lên vạch xuất phát!`,
+        `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Follow kênh & nhắn "join" để vào đường đua!`,
         'system',
       );
       speakCommentator(
-        `Chào mừng cả nhà đến với ván đua số ${matchNoRef.current}, chặng đua ${totalLapsRef.current} vòng! Hãy gõ bình luận bất kỳ hoặc chạm thả tim để xuất hiện nhân vật tại vạch xuất phát ngay nào!`,
+        `Chào mừng cả nhà đến với ván đua số ${matchNoRef.current}, chặng đua ${totalLapsRef.current} vòng! Hãy bấm Follow kênh và nhắn chữ join để lên vạch xuất phát ngay nào! Ai đã Follow trước đó chỉ cần nhắn join là vào đua luôn nhé!`,
       );
       pushRaceSync(true);
     },
@@ -877,6 +888,25 @@ export function useRaceEngine() {
     [pushFeed],
   );
 
+  const handleFollow = useCallback(
+    (payload: {
+      userId: string;
+      username: string;
+      nickname: string;
+      avatar: string;
+      platform?: 'tiktok' | 'facebook';
+    }) => {
+      followersRef.current.add(payload.userId);
+      if (payload.username) followersRef.current.add(payload.username);
+      playJoinSfx();
+      pushFeed(
+        `➕ ${payload.nickname} đã Follow kênh! Nhắn "join" để vào đường đua ngay!`,
+        'join',
+      );
+    },
+    [pushFeed],
+  );
+
   const handleChat = useCallback(
     (payload: {
       userId: string;
@@ -884,8 +914,61 @@ export function useRaceEngine() {
       nickname: string;
       avatar: string;
       comment: string;
+      isFollower?: boolean;
       platform?: 'tiktok' | 'facebook';
     }) => {
+      if (payload.isFollower) {
+        followersRef.current.add(payload.userId);
+        if (payload.username) followersRef.current.add(payload.username);
+      }
+
+      const existingRacer = racersRef.current.get(payload.userId);
+      // Nếu người chơi ĐÃ có mặt trên đường đua -> bình luận giúp tăng tốc (+TỐC)
+      if (existingRacer && phaseRef.current !== 'podium') {
+        const now = performance.now();
+        if (now - existingRacer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
+          existingRacer.lastChatBoostAt = now;
+          applyBoost(existingRacer, 'chat', 1800, '💬 +TỐC');
+          pushRaceSync(true);
+        }
+        return;
+      }
+
+      // Quy tắc vào game: người chơi phải nhắn "join" VÀ đã Follow kênh (đã Follow từ trước hoặc vừa Follow đều được)
+      const commentTrim = String(payload.comment || '').trim();
+      const wantsJoin = /(?:^|\s)[!/#]?join(?:\s|$)/i.test(commentTrim);
+      if (!wantsJoin) return;
+
+      const savedProf =
+        savedUsersRef.current.get(payload.userId) ||
+        savedUsersRef.current.get(payload.username);
+      const hasFollowed = Boolean(
+        payload.isFollower ||
+          followersRef.current.has(payload.userId) ||
+          (payload.username && followersRef.current.has(payload.username)) ||
+          savedProf?.isFollower ||
+          payload.platform === 'facebook',
+      );
+
+      if (!hasFollowed) {
+        pushFeed(
+          `🔒 ${payload.nickname} ơi, hãy Follow kênh trước rồi nhắn "join" để vào đua nhé!`,
+          'system',
+        );
+        const nowMs = Date.now();
+        if (nowMs - lastNeedFollowVoiceAtRef.current > 4800) {
+          lastNeedFollowVoiceAtRef.current = nowMs;
+          speakCommentator(
+            `Bạn ${payload.nickname} ơi, hãy bấm Follow kênh trước rồi nhắn chữ join để vào đường đua cùng cả nhà nhé!`,
+          );
+        }
+        return;
+      }
+
+      // Đủ điều kiện (Đã Follow + nhắn "join") -> cho vào đường đua hoặc xếp hàng ván mới!
+      followersRef.current.add(payload.userId);
+      if (payload.username) followersRef.current.add(payload.username);
+
       if (phaseRef.current === 'podium') {
         queueForNextRound({
           userId: payload.userId,
@@ -896,7 +979,8 @@ export function useRaceEngine() {
         });
         return;
       }
-      const { racer, created } = ensureRacer(
+
+      ensureRacer(
         payload.userId,
         payload.username,
         payload.nickname,
@@ -904,19 +988,9 @@ export function useRaceEngine() {
         false,
         payload.platform || 'tiktok',
       );
-      if (created) {
-        pushRaceSync(true);
-        return;
-      }
-
-      const now = performance.now();
-      if (now - racer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
-        racer.lastChatBoostAt = now;
-        applyBoost(racer, 'chat', 1800, '💬 +TỐC');
-        pushRaceSync(true);
-      }
+      pushRaceSync(true);
     },
-    [applyBoost, ensureRacer, pushRaceSync, queueForNextRound],
+    [applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
   );
 
   const handleLike = useCallback(
@@ -928,24 +1002,10 @@ export function useRaceEngine() {
       likeCount: number;
       platform?: 'tiktok' | 'facebook';
     }) => {
-      if (phaseRef.current === 'podium') {
-        queueForNextRound({
-          userId: payload.userId,
-          username: payload.username,
-          nickname: payload.nickname,
-          avatar: payload.avatar,
-          coins: 0,
-        });
-        return;
-      }
-      const { racer, created } = ensureRacer(
-        payload.userId,
-        payload.username,
-        payload.nickname,
-        payload.avatar,
-        false,
-        payload.platform || 'tiktok',
-      );
+      // Thả tim chỉ tăng tốc Sprint cho những tay đua đã Follow + nhắn "join" vào sân
+      const racer = racersRef.current.get(payload.userId);
+      if (!racer || phaseRef.current === 'podium') return;
+
       racer.likeEnergy += Math.max(1, payload.likeCount || 1);
       racer.lastInteractAt = performance.now();
       if (racer.likeEnergy >= RACE_CONSTANTS.LIKE_SPRINT_THRESHOLD) {
@@ -954,11 +1014,9 @@ export function useRaceEngine() {
         playSprintSfx();
         pushFeed(`⚡ ${racer.nickname} thả tim kích hoạt SPRINT!`, 'sprint');
         pushRaceSync(true);
-      } else if (created) {
-        pushRaceSync(true);
       }
     },
-    [applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
+    [applyBoost, pushFeed, pushRaceSync],
   );
 
   const handleGift = useCallback(
@@ -1125,7 +1183,7 @@ export function useRaceEngine() {
           applySavedUsersList(j.data);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     // Đồng bộ ngay trạng thái cuộc đua hiện tại từ Server khi mở trang Stage (/?view=stage)
     void fetch('/api/race/sync')
       .then((r) => r.json())
@@ -1134,7 +1192,7 @@ export function useRaceEngine() {
           applyRaceSync(j.data);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [applyRaceSync, applySavedUsersList]);
 
   // ---------- Kết nối Backend qua cả SSE (/api/tiktok/events giống npc-action-live) + WebSocket (/ws) ----------
@@ -1202,15 +1260,43 @@ export function useRaceEngine() {
         } else if (action === 'setAudio' && value && IS_STAGE) {
           setAudioSettings(value);
         }
-      } else if (type === 'chat' || type === 'member' || type === 'follow' || type === 'share') {
+      } else if (type === 'chat') {
         handleChat({
           userId: String(data.userId || data.username || data.nickname || 'viewer'),
           username: String(data.username || data.userId || 'viewer'),
           nickname: String(data.nickname || data.username || 'Tay đua'),
           avatar: String(data.avatar || ''),
-          comment: String(data.comment || type),
+          comment: String(data.comment || ''),
+          isFollower: Boolean(data.isFollower),
           platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
         });
+      } else if (type === 'follow') {
+        handleFollow({
+          userId: String(data.userId || data.username || data.nickname || 'viewer'),
+          username: String(data.username || data.userId || 'viewer'),
+          nickname: String(data.nickname || data.username || 'Tay đua'),
+          avatar: String(data.avatar || ''),
+          platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+        });
+      } else if (type === 'member') {
+        const uid = String(data.userId || data.username || data.nickname || 'viewer');
+        const uname = String(data.username || data.userId || 'viewer');
+        if (data.isFollower) {
+          followersRef.current.add(uid);
+          if (uname) followersRef.current.add(uname);
+        }
+        // Chỉ tự động cho Chủ Phòng (isHost) vào vạch xuất phát khi kết nối TikTok; khán giả phải Follow + nhắn "join"
+        if (data.isHost) {
+          handleChat({
+            userId: uid,
+            username: uname,
+            nickname: String(data.nickname || data.username || 'Chủ phòng'),
+            avatar: String(data.avatar || ''),
+            comment: 'join',
+            isFollower: true,
+            platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+          });
+        }
       } else if (type === 'like') {
         handleLike({
           userId: String(data.userId || data.username || data.nickname || 'viewer'),
@@ -1255,7 +1341,7 @@ export function useRaceEngine() {
             try {
               const parsed = JSON.parse((ev as MessageEvent).data);
               dispatchIncoming(t, parsed);
-            } catch {}
+            } catch { }
           });
         }
         sse.onerror = () => {
@@ -1263,7 +1349,7 @@ export function useRaceEngine() {
           if (!alive) return;
           sseReconnectTimer = window.setTimeout(connectSse, 3000);
         };
-      } catch {}
+      } catch { }
     };
 
     // 2) Kênh WebSocket (/ws) song song
@@ -1279,13 +1365,13 @@ export function useRaceEngine() {
             if (msg?.type && msg?.data !== undefined) {
               dispatchIncoming(msg.type, msg.data);
             }
-          } catch {}
+          } catch { }
         };
         ws.onclose = () => {
           if (!alive) return;
           wsReconnectTimer = window.setTimeout(connectWs, 3000);
         };
-      } catch {}
+      } catch { }
     };
 
     connectSse();
@@ -1301,6 +1387,7 @@ export function useRaceEngine() {
     applySavedUsersList,
     enterPodiumPhase,
     handleChat,
+    handleFollow,
     handleGift,
     handleLike,
     requestMap,
@@ -1589,7 +1676,7 @@ export function useRaceEngine() {
       const res = await fetch('/api/tiktok/disconnect', { method: 'POST' });
       const j = await res.json();
       if (j?.data) setLiveStatus(j.data);
-    } catch {}
+    } catch { }
   }, []);
 
   const connectFacebook = useCallback(
@@ -1616,7 +1703,7 @@ export function useRaceEngine() {
       const res = await fetch('/api/facebook/disconnect', { method: 'POST' });
       const j = await res.json();
       if (j?.data) setLiveStatus(j.data);
-    } catch {}
+    } catch { }
   }, []);
 
   const ingestFbEvent = useCallback(
@@ -1641,7 +1728,7 @@ export function useRaceEngine() {
           body: JSON.stringify(payload),
         });
         if (res.ok) return;
-      } catch {}
+      } catch { }
     },
     [],
   );
@@ -1684,7 +1771,7 @@ export function useRaceEngine() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, value }),
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const postTestEmit = useCallback(
@@ -1693,7 +1780,7 @@ export function useRaceEngine() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, data }),
-      }).catch(() => {});
+      }).catch(() => { });
     },
     [],
   );
@@ -1712,11 +1799,11 @@ export function useRaceEngine() {
     ) => {
       if (action === 'chat_new') {
         const u = pickRandomOrNewUser(false);
-        postTestEmit('chat', { ...u, comment: 'play', platform: 'tiktok' });
+        postTestEmit('chat', { ...u, comment: 'join', isFollower: true, platform: 'tiktok' });
       } else if (action === 'chat_10') {
         for (let i = 0; i < 10; i++) {
           const u = pickRandomOrNewUser(false);
-          postTestEmit('chat', { ...u, comment: '1', platform: 'tiktok' });
+          postTestEmit('chat', { ...u, comment: 'join', isFollower: true, platform: 'tiktok' });
         }
       } else if (action === 'like') {
         const u = pickRandomOrNewUser(true);
@@ -1736,7 +1823,8 @@ export function useRaceEngine() {
           ...u,
           userId: `fb_${u.userId}`,
           username: `fb_${u.username}`,
-          comment: 'Vào đua từ Facebook Live!',
+          comment: 'join',
+          isFollower: true,
           platform: 'facebook',
         });
       } else if (action === 'fb_stars') {

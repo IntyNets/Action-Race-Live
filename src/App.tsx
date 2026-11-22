@@ -311,22 +311,22 @@ export default function App() {
           </div>
         </div>
 
-        {/* Danh Sách Toàn Bộ Tay Đua (Hiển thị đầy đủ bảng xếp hạng, không cắt Top 3) + Mini Race Map */}
+        {/* Danh Sách Tay Đua Nhỏ Gọn (Hiển thị đầy đủ bảng xếp hạng) + Mini Race Map */}
         {phase !== 'podium' && (
           <div className="flex items-start justify-between gap-2">
             {top5.length > 0 ? (
-              <div className="pointer-events-auto w-[178px] rounded-xl bg-slate-950/65 border border-white/15 backdrop-blur-md p-1.5 shadow-lg">
-                <div className="flex items-center justify-between text-[9.5px] font-black uppercase tracking-wider text-amber-300 mb-1">
-                  <span className="flex items-center gap-1">
-                    <Trophy className="w-3 h-3" /> DANH SÁCH ({racerCount})
+              <div className="pointer-events-auto w-[138px] rounded-lg bg-slate-950/55 border border-white/15 backdrop-blur-md p-1 shadow-lg">
+                <div className="flex items-center justify-between text-[8.5px] font-black uppercase tracking-wider text-amber-300 mb-0.5 px-0.5">
+                  <span className="flex items-center gap-0.5">
+                    <Trophy className="w-2.5 h-2.5" /> DANH SÁCH ({racerCount})
                   </span>
-                  <span className="text-slate-300">VÒNG</span>
+                  <span className="text-slate-300">V</span>
                 </div>
-                <div className="flex flex-col gap-0.5 max-h-[250px] overflow-y-auto pr-0.5">
+                <div className="flex flex-col gap-[1.5px] max-h-[168px] overflow-y-auto pr-0.5">
                   {top5.map((r) => (
                     <div
                       key={r.id}
-                      className={`flex items-center gap-1 px-1.5 py-[2px] rounded-md text-[10px] ${
+                      className={`flex items-center gap-1 px-1 py-[1px] rounded text-[9px] leading-tight ${
                         r.rank === 1
                           ? 'bg-amber-400/25 border border-amber-300/50'
                           : r.rank === 2
@@ -337,7 +337,7 @@ export default function App() {
                       }`}
                     >
                       <span
-                        className={`w-4 text-center font-black shrink-0 ${
+                        className={`w-3.5 text-center font-black shrink-0 text-[8.5px] ${
                           r.rank === 1
                             ? 'text-amber-300'
                             : r.rank === 2
@@ -352,21 +352,21 @@ export default function App() {
                       <img
                         src={r.avatar}
                         alt={r.nickname}
-                        className="w-3.5 h-3.5 rounded-full object-cover bg-slate-800 shrink-0"
+                        className="w-3 h-3 rounded-full object-cover bg-slate-800 shrink-0"
                       />
                       <span className="flex-1 truncate font-semibold text-white">
                         {r.boost === 'dragon'
-                          ? '🐉 '
+                          ? '🐉'
                           : r.boost === 'rocket'
-                            ? '🚀 '
+                            ? '🚀'
                             : r.boost === 'jetpack'
-                              ? '🎒 '
+                              ? '🎒'
                               : r.petName
-                                ? '🐾 '
+                                ? '🐾'
                                 : ''}
                         {r.nickname}
                       </span>
-                      <span className="text-[9px] font-mono text-sky-300 shrink-0">
+                      <span className="text-[8px] font-mono text-sky-300 shrink-0">
                         {r.lap}/{totalLaps}
                       </span>
                     </div>
@@ -555,8 +555,8 @@ export default function App() {
           IS_STAGE ? 'pb-14' : 'pb-3'
         }`}
       >
-        {/* Các thẻ sự kiện tương tác sôi động (giới hạn chiều rộng để không đè lên Drone Cam bên phải) */}
-        <div className="flex flex-col gap-1 items-start max-w-[66%]">
+        {/* Các thẻ sự kiện tương tác sôi động (giới hạn chiều rộng để không đè lên Drone Cam to bên phải) */}
+        <div className="flex flex-col gap-1 items-start max-w-[54%]">
           {feed.slice(0, 2).map((item, idx) => (
             <div
               key={item.id}
@@ -594,10 +594,10 @@ export default function App() {
 
         <div className="rounded-xl bg-slate-950/75 border border-white/15 backdrop-blur-md px-2.5 py-1.5 shadow-lg text-center flex flex-col gap-0.5">
           <div className="text-[10px] font-bold text-slate-200">
-            💬 Bình luận: Vào đua · ❤️ Tim/Like: Sprint · 🎒 1-10 xu/sao: Jetpack · 🚀 11-99 xu/sao: Tên lửa
+            ➕ Follow kênh + 💬 Nhắn <span className="text-emerald-300 font-black">join</span>: Vào đua · ❤️ Tim: Sprint · 🎒 1-10 xu: Jetpack · 🚀 11-99 xu: Tên lửa
           </div>
           <div className="text-[10px] font-black text-amber-300">
-            👑 Quà / Sao = 🎥 Lên Sóng Spotlight + 🐾 Pet VIP · 100+ xu/sao = 🐉 Rồng Thần!
+            ✅ Đã Follow trước chỉ cần nhắn "join" · 👑 Quà = 🎥 Spotlight + 🐾 Pet VIP · 100+ xu = 🐉 Rồng Thần!
           </div>
         </div>
       </div>
@@ -983,7 +983,7 @@ export default function App() {
                 </div>
                 <ul className="text-[11px] text-slate-300 space-y-1 list-disc list-inside leading-relaxed">
                   <li>
-                    <b>Cách 1 (Khán giả trên TikTok / Facebook Live):</b> Chỉ cần <b>Bình luận bất kỳ</b> (vd: <code>1</code>, <code>join</code>, <code>đua</code>...), <b>Vào phòng live</b>, <b>Thả tim ❤️</b>, <b>Follow ➕</b> hoặc <b>Tặng quà / Sao 🎁</b> là nhân vật mang tên & màu Avatar của người đó <b>tự động xuất hiện ngay trên đường đua</b>!
+                    <b>Cách 1 (Khán giả trên TikTok / Facebook Live):</b> Người chơi mới cần <b>Follow kênh ➕</b> và nhắn <code>join</code> để vào đường đua! Người chơi <b>đã Follow trước đó</b> chỉ cần nhắn <code>join</code> là vào đua ngay (tự động khôi phục Cấp độ, Điểm & Thú cưng VIP đã lưu).
                   </li>
                   <li>
                     <b>Cách 2 (Chủ phòng / Thêm tay đua thủ công):</b> Khi bấm <b>Kết nối TikTok</b>, nhân vật của chủ kênh tự động vào sân. Hoặc gõ tên bất kỳ vào ô dưới đây để cho vào đua ngay:
@@ -1008,6 +1008,7 @@ export default function App() {
                               username: uid,
                               nickname: name,
                               comment: 'join',
+                              isFollower: true,
                               platform: platformTab,
                             },
                           }),
@@ -1033,6 +1034,7 @@ export default function App() {
                             username: uid,
                             nickname: raw,
                             comment: 'join',
+                            isFollower: true,
                             platform: platformTab,
                           },
                         }),
@@ -1430,6 +1432,7 @@ export default function App() {
                                   avatar: u.avatar,
                                   platform: u.platform,
                                   comment: 'join',
+                                  isFollower: true,
                                 },
                               }),
                             });
