@@ -553,17 +553,17 @@ export default function App() {
 
         <div className="rounded-xl bg-slate-950/75 border border-white/15 backdrop-blur-md px-2.5 py-1.5 shadow-lg text-center flex flex-col gap-0.5">
           <div className="text-[10px] font-bold text-slate-200">
-            💬 Chat: Vào đua · ❤️ Tim: Sprint · 🎒 1-10 xu: Jetpack · 🚀 11-99 xu: Tên lửa
+            💬 Bình luận: Vào đua · ❤️ Tim/Like: Sprint · 🎒 1-10 xu/sao: Jetpack · 🚀 11-99 xu/sao: Tên lửa
           </div>
           <div className="text-[10px] font-black text-amber-300">
-            👑 Quà tặng = 🎥 Lên Sóng Spotlight + 🐾 Pet VIP · 100+ xu = 🐉 Rồng Thần!
+            👑 Quà / Sao = 🎥 Lên Sóng Spotlight + 🐾 Pet VIP · 100+ xu/sao = 🐉 Rồng Thần!
           </div>
         </div>
       </div>
     </div>
   );
 
-  // ==================== 1. CHẾ ĐỘ LIVE (/?view=stage) — CHỈ DÀNH CHO OBS / TIKTOK LIVE STUDIO ====================
+  // ==================== 1. CHẾ ĐỘ LIVE (/?view=stage) — CHỈ DÀNH CHO OBS / PRISM / LIVE STUDIO ====================
   if (IS_STAGE) {
     return (
       <div className="w-screen h-screen bg-black flex items-center justify-center overflow-hidden">
@@ -581,10 +581,10 @@ export default function App() {
           <span className="text-xl">🏁</span>
           <div>
             <h1 className="text-sm font-black text-white leading-tight">
-              TikTok LIVE 3D Race — Bảng Điều Khiển
+              Đấu Trường Đua Tốc Độ 3D — Action Race Live (Bảng Điều Khiển)
             </h1>
             <p className="text-[11px] text-slate-400">
-              Trang điều khiển im lặng · Chỉ trang Chế Độ Live (<code>/?view=stage</code>) phát tiếng
+              Live Đa Nền Tảng (TikTok & Facebook) · Chỉ trang Chế Độ Live (<code>/?view=stage</code>) phát tiếng
             </p>
           </div>
         </div>
@@ -934,6 +934,38 @@ export default function App() {
                   {connMsg || liveStatus.error || fb?.error}
                 </p>
               )}
+
+              {/* Hộp Link Stage Đa Nền Tảng chống quét AI (chuẩn npc-action-live) */}
+              <div className="space-y-1.5 rounded-xl bg-slate-950/75 p-2.5 text-[11px] text-slate-300 border border-white/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-black text-emerald-300">
+                    🛡️ Link Stage Đa Nền Tảng chống quét AI (1080 × 1920):
+                  </span>
+                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 border border-emerald-500/40">
+                    Giao diện trung tính · Phát đồng thời TikTok & Facebook
+                  </span>
+                </div>
+                <div className="grid gap-1.5 sm:grid-cols-3">
+                  <div className="rounded-lg bg-slate-900/90 p-2 border border-white/10">
+                    <div className="font-bold text-amber-300">⭐ Đa nền tảng (Khuyên dùng)</div>
+                    <code className="mt-0.5 block select-all truncate text-[10.5px] text-slate-200">
+                      {stageUrl}
+                    </code>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/90 p-2 border border-white/10">
+                    <div className="font-bold text-pink-300">🎵 Riêng TikTok</div>
+                    <code className="mt-0.5 block select-all truncate text-[10.5px] text-slate-200">
+                      {stageUrl}&platform=tiktok
+                    </code>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/90 p-2 border border-white/10">
+                    <div className="font-bold text-blue-300">🔵 Riêng Facebook</div>
+                    <code className="mt-0.5 block select-all truncate text-[10.5px] text-slate-200">
+                      {stageUrl}&platform=facebook
+                    </code>
+                  </div>
+                </div>
+              </div>
             </section>
 
             {/* 2. Thiết lập Đường Đua & Ván Đấu */}

@@ -26,7 +26,7 @@
       document.body.appendChild(badge);
     }
     badge.innerHTML =
-      '🟢 <b>Kết nối 3D Race Live (Tự động bắt bình luận & Sao FB)</b><br/><span style="font-size:11px;color:#a7f3d0">' +
+      '🟢 <b>Kết nối Action Race Live 3D (Tự động bắt bình luận & Sao FB)</b><br/><span style="font-size:11px;color:#a7f3d0">' +
       (lastText ? lastText.slice(0, 62) : 'Đang lắng nghe bình luận Facebook Live...') +
       '</span>';
   }
@@ -178,3 +178,4 @@
     }
   }, 850);
 })();
+

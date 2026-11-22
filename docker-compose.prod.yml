@@ -2,9 +2,9 @@
 # DOCKER COMPOSE PRODUCTION CHO VPS (CÓ SẴN DOCKER & NGINX PROXY MANAGER - NPM)
 # =============================================================================
 services:
-  tiktok-live-3d-race:
-    image: ghcr.io/intynets/tiktok-live-3d-race:latest
-    container_name: tiktok-live-3d-race
+  action-race-live:
+    image: ghcr.io/intynets/action-race-live:latest
+    container_name: action-race-live
     restart: unless-stopped
     ports:
       - "${APP_PORT:-3007}:3002"

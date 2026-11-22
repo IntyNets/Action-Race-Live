@@ -1005,7 +1005,7 @@ app.get('/api/facebook/bridge', (_req, res) => {
 <html lang="vi">
 <head>
   <meta charset="utf-8" />
-  <title>Cầu nối Facebook Live - TikTok LIVE 3D Race</title>
+  <title>Cầu nối Facebook Live - Đấu Trường Đua Tốc Độ 3D (Action Race Live)</title>
   <style>
     body {
       margin: 0;
@@ -1215,7 +1215,7 @@ app.get('/api/extension/download', (req, res) => {
           }
         }
         files.push({
-          name: `race-fb-live-extension/${fn}`,
+          name: `action-race-live-extension/${fn}`,
           data: Buffer.from(text, 'utf8'),
         });
       }
@@ -1229,7 +1229,7 @@ app.get('/api/extension/download', (req, res) => {
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename="race-fb-live-extension.zip"',
+      'attachment; filename="action-race-live-extension.zip"',
     );
     res.send(zipBuf);
   } catch (err: any) {
@@ -1353,7 +1353,7 @@ async function startServer() {
 
   server.listen(PORT, HOST, () => {
     console.log(
-      `🏁 TikTok & Facebook LIVE 3D Interactive Race đang chạy tại http://${HOST}:${PORT}`,
+      `🏁 Đấu Trường Đua Tốc Độ 3D — Action Race Live đang chạy tại http://${HOST}:${PORT}`,
     );
   });
 }

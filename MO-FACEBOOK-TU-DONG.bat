@@ -45,3 +45,4 @@ echo -> Ban chi can mo bai Facebook Live tren cua so vua bat,
 echo    binh luan se TU DONG bay ve Duong Dua 3D ma KHONG CAN bam F12!
 echo.
 timeout /t 5
+

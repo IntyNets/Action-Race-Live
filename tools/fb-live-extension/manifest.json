@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Tự Động Kết Nối TikTok / Facebook Live - 3D Race Live",
+  "name": "Tự Động Kết Nối TikTok / Facebook Live - Action Race Live 3D",
   "version": "2.3.0",
-  "description": "Tự động bắt bình luận & Sao Facebook Live truyền thẳng về Game Đua Chạy 3D.",
+  "description": "Tự động bắt bình luận & Sao Facebook Live truyền thẳng về Game Đấu Trường Đua Tốc Độ 3D (Action Race Live).",
   "permissions": ["tabs"],
   "host_permissions": [
     "https://*.anfloral.com.vn/*",
@@ -38,3 +38,4 @@
     }
   ]
 }
+
