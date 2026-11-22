@@ -244,27 +244,29 @@ export class CameraBoundsController {
     shakeAmp: number;
   } {
     if (!racer) {
-      return { fov: 70, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
+      return { fov: 68, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
     }
     const boost = racer.boost;
     if (boost === 'dragon') {
-      return { fov: 90, distOffset: 2.3, heightOffset: 0.75, shakeAmp: 0.065 };
+      // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi camera xa + nâng cao để thấy trọn rồng, nhân vật và đường đua
+      return { fov: 84, distOffset: 9.2, heightOffset: 4.4, shakeAmp: 0.025 };
     }
     if (boost === 'rocket') {
-      return { fov: 88, distOffset: 1.85, heightOffset: 0.45, shakeAmp: 0.048 };
+      // Tên lửa dài & phun lửa lớn: lùi camera thoáng hơn để không bị sát mặt
+      return { fov: 82, distOffset: 5.4, heightOffset: 2.5, shakeAmp: 0.02 };
     }
     if (boost === 'jetpack') {
-      return { fov: 83, distOffset: 1.25, heightOffset: 0.35, shakeAmp: 0.024 };
+      return { fov: 79, distOffset: 3.6, heightOffset: 1.7, shakeAmp: 0.012 };
     }
     if (boost === 'sprint' || boost === 'join' || boost === 'chat') {
-      return { fov: 81, distOffset: 0.95, heightOffset: 0.15, shakeAmp: 0.015 };
+      return { fov: 76, distOffset: 2.3, heightOffset: 0.85, shakeAmp: 0.008 };
     }
     if (racer.speed < 14 && racer.speed > 0.5) {
       // SLOW
-      return { fov: 66, distOffset: -0.5, heightOffset: -0.15, shakeAmp: 0 };
+      return { fov: 65, distOffset: -0.4, heightOffset: -0.1, shakeAmp: 0 };
     }
     // NORMAL SPEED
-    return { fov: 70, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
+    return { fov: 68, distOffset: 0, heightOffset: 0, shakeAmp: 0 };
   }
 }
 
@@ -353,10 +355,10 @@ export class ChaseCameraMode {
       lat: latBlend,
       speed: primary.speed,
       orbitAngle: 0, // 0 rad = Phía sau nhân vật
-      radius: bounds.clampDistance(7.0 + speedResp.distOffset),
-      height: bounds.clampHeight(3.6 + speedResp.heightOffset),
+      radius: bounds.clampDistance(8.2 + speedResp.distOffset),
+      height: bounds.clampHeight(4.1 + speedResp.heightOffset),
       curveBiasLat: curveBias,
-      lookAhead: 3.2,
+      lookAhead: 3.4,
       lookY: getCharacterFollowLookY(primary),
       fov: bounds.clampFov(speedResp.fov),
       panSpeed: 7.2,
@@ -395,22 +397,25 @@ export class FrontTrackingCameraMode {
     }
 
     const speedResp = bounds.computeSpeedResponse(racer);
-    // Góc chính diện hơi lệch nhẹ (~8 độ) để thấy rõ cả chiều sâu 3D của thân, tay chân và cảnh quan đường đua phía sau
-    const subtleAngle = Math.PI - Math.sin(tSec * 0.9) * 0.14;
+    const isBigVehicle = racer.boost === 'dragon' || racer.boost === 'rocket';
+    // Khi cưỡi Rồng Thần / Tên Lửa: mở góc chính diện xéo 3/4 (~140°) + lùi xa để thấy trọn toàn thân rồng/tên lửa, nhân vật & đường đua thoáng đãng
+    const subtleAngle = isBigVehicle
+      ? Math.PI * 0.78 + Math.sin(tSec * 0.7) * 0.1
+      : Math.PI - Math.sin(tSec * 0.9) * 0.14;
 
     return {
       dist: Math.max(0, racer.z),
       lat: racer.x,
       speed: racer.speed,
       orbitAngle: subtleAngle,
-      radius: bounds.clampDistance(6.8 + speedResp.distOffset * 0.85),
-      height: bounds.clampHeight(3.25 + speedResp.heightOffset * 0.65),
+      radius: bounds.clampDistance(8.2 + speedResp.distOffset * 1.05),
+      height: bounds.clampHeight(3.9 + speedResp.heightOffset * 0.95),
       curveBiasLat: 0,
       lookAhead: -0.4,
-      lookY: getCharacterFollowLookY(racer) - 0.12,
-      fov: bounds.clampFov(Math.min(86, speedResp.fov)),
+      lookY: getCharacterFollowLookY(racer) - 0.1,
+      fov: bounds.clampFov(Math.min(84, speedResp.fov)),
       panSpeed: 8.0,
-      shakeAmp: speedResp.shakeAmp * 0.6,
+      shakeAmp: speedResp.shakeAmp * 0.5,
     };
   }
 }
@@ -470,14 +475,14 @@ export class SideTrackingCameraMode {
       lat: focusLat,
       speed: primary.speed,
       orbitAngle: sideOrbitAngle,
-      radius: bounds.clampDistance(7.2 + extraRadius + speedResp.distOffset * 0.6),
-      height: bounds.clampHeight(3.15 + speedResp.heightOffset * 0.5),
+      radius: bounds.clampDistance(8.4 + extraRadius + speedResp.distOffset * 0.9),
+      height: bounds.clampHeight(3.8 + speedResp.heightOffset * 0.85),
       curveBiasLat: 0,
       lookAhead: 0.9,
-      lookY: getCharacterFollowLookY(primary) - 0.15,
+      lookY: getCharacterFollowLookY(primary) - 0.1,
       fov: bounds.clampFov(Math.min(82, speedResp.fov)),
       panSpeed: 7.8,
-      shakeAmp: speedResp.shakeAmp * 0.5,
+      shakeAmp: speedResp.shakeAmp * 0.4,
     };
   }
 }

@@ -1539,7 +1539,7 @@ export function useRaceEngine() {
         hudSyncAccumRef.current = 0;
         setTimerSec(Math.ceil(timerRef.current));
         setRacerCount(list.length);
-        setTop5(list.slice(0, 5).map((r) => ({ ...r })));
+        setTop5(list.slice(0, 30).map((r) => ({ ...r })));
         setLeaderLap(list[0]?.lap || 1);
         setLeaderProgress(
           list[0] ? Math.min(100, Math.round((Math.max(0, list[0].z) / totalRaceDist) * 100)) : 0,

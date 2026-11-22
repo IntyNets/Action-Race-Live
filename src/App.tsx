@@ -311,46 +311,62 @@ export default function App() {
           </div>
         </div>
 
-        {/* Top 3 Leaderboard (gọn, không che đường đua) + Mini Race Map toàn bộ người chơi */}
+        {/* Danh Sách Toàn Bộ Tay Đua (Hiển thị đầy đủ bảng xếp hạng, không cắt Top 3) + Mini Race Map */}
         {phase !== 'podium' && (
           <div className="flex items-start justify-between gap-2">
             {top5.length > 0 ? (
-              <div className="w-[176px] rounded-xl bg-slate-950/65 border border-white/15 backdrop-blur-md p-1.5 shadow-lg">
+              <div className="pointer-events-auto w-[178px] rounded-xl bg-slate-950/65 border border-white/15 backdrop-blur-md p-1.5 shadow-lg">
                 <div className="flex items-center justify-between text-[9.5px] font-black uppercase tracking-wider text-amber-300 mb-1">
                   <span className="flex items-center gap-1">
-                    <Trophy className="w-3 h-3" /> TOP 3
+                    <Trophy className="w-3 h-3" /> DANH SÁCH ({racerCount})
                   </span>
                   <span className="text-slate-300">VÒNG</span>
                 </div>
-                <div className="flex flex-col gap-0.5">
-                  {top5.slice(0, 3).map((r) => (
+                <div className="flex flex-col gap-0.5 max-h-[250px] overflow-y-auto pr-0.5">
+                  {top5.map((r) => (
                     <div
                       key={r.id}
-                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10.5px] ${r.rank === 1
-                          ? 'bg-amber-400/20 border border-amber-300/40'
-                          : 'bg-white/5'
-                        }`}
+                      className={`flex items-center gap-1 px-1.5 py-[2px] rounded-md text-[10px] ${
+                        r.rank === 1
+                          ? 'bg-amber-400/25 border border-amber-300/50'
+                          : r.rank === 2
+                            ? 'bg-slate-300/15 border border-slate-300/30'
+                            : r.rank === 3
+                              ? 'bg-orange-400/15 border border-orange-400/30'
+                              : 'bg-white/5'
+                      }`}
                     >
                       <span
-                        className={`w-3 text-center font-black ${r.rank === 1
+                        className={`w-4 text-center font-black shrink-0 ${
+                          r.rank === 1
                             ? 'text-amber-300'
                             : r.rank === 2
                               ? 'text-slate-200'
-                              : 'text-orange-300'
-                          }`}
+                              : r.rank === 3
+                                ? 'text-orange-300'
+                                : 'text-sky-300'
+                        }`}
                       >
-                        {r.rank}
+                        #{r.rank}
                       </span>
                       <img
                         src={r.avatar}
                         alt={r.nickname}
-                        className="w-4 h-4 rounded-full object-cover bg-slate-800"
+                        className="w-3.5 h-3.5 rounded-full object-cover bg-slate-800 shrink-0"
                       />
                       <span className="flex-1 truncate font-semibold text-white">
-                        {r.petName ? '🐾 ' : ''}
+                        {r.boost === 'dragon'
+                          ? '🐉 '
+                          : r.boost === 'rocket'
+                            ? '🚀 '
+                            : r.boost === 'jetpack'
+                              ? '🎒 '
+                              : r.petName
+                                ? '🐾 '
+                                : ''}
                         {r.nickname}
                       </span>
-                      <span className="text-[9.5px] font-mono text-sky-300">
+                      <span className="text-[9px] font-mono text-sky-300 shrink-0">
                         {r.lap}/{totalLaps}
                       </span>
                     </div>

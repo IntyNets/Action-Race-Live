@@ -40,7 +40,7 @@ interface LabelBadgeInfo {
   petName: string;
 }
 
-const MAX_BADGES = 8;
+const MAX_BADGES = 30;
 const MAX_PARTICLES = 260;
 
 // Tách riêng Nhân vật người chơi & Thú cưng VIP từ nguồn iErcann/NotBlox (Notblox-Assets)
@@ -2614,7 +2614,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               projVec.set(pod.x, pod.y + (r.rank === 1 ? 4.5 : 3.7), pod.z);
             } else {
               const s = sampleCircuit(r.z, r.x);
-              const headH = r.boost === 'dragon' ? 8.2 : r.boost === 'rocket' ? 5.1 : 3.9;
+              const headH =
+                r.boost === 'dragon'
+                  ? 8.5
+                  : r.boost === 'rocket'
+                    ? 5.3
+                    : r.boost === 'jetpack'
+                      ? 4.6
+                      : 3.75;
               projVec.set(s.x, headH, s.z);
             }
             projVec.project(camera);
@@ -2677,7 +2684,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         className="pointer-events-none absolute inset-0 z-10"
       />
 
-      {/* Thẻ Tên + Avatar TikTok nổi trên đầu nhân vật */}
+      {/* Thẻ Vị Trí (#Rank) + Tên + Avatar nổi trực tiếp trên đầu mọi người chơi */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden z-10">
         {badges.map((b, idx) => (
           <div
@@ -2703,26 +2710,55 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               )}
             </div>
             <div
-              className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${b.rank === 1
-                  ? 'bg-amber-400/95 border-yellow-200 text-slate-950 scale-110'
+              className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${
+                b.rank === 1
+                  ? 'bg-amber-400/95 border-yellow-100 text-slate-950 scale-105 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
                   : b.rank === 2
                     ? 'bg-slate-200/95 border-white text-slate-900'
                     : b.rank === 3
                       ? 'bg-orange-400/95 border-orange-200 text-slate-950'
-                      : 'bg-slate-950/75 border-white/25 text-white'
-                }`}
+                      : 'bg-slate-950/80 border-white/30 text-white'
+              }`}
             >
+              <span
+                className={`px-1.5 py-[1px] rounded-full text-[10px] font-black leading-tight ${
+                  b.rank === 1
+                    ? 'bg-slate-950 text-amber-300'
+                    : b.rank === 2
+                      ? 'bg-slate-800 text-white'
+                      : b.rank === 3
+                        ? 'bg-slate-950 text-orange-300'
+                        : 'bg-sky-500 text-slate-950'
+                }`}
+              >
+                #{b.rank}
+              </span>
               <img
                 src={b.avatar}
                 alt={b.nickname}
-                className="w-5 h-5 rounded-full object-cover border border-white/60 bg-slate-800"
+                className="w-4 h-4 rounded-full object-cover border border-white/60 bg-slate-800"
               />
-              <span className="text-[10px] font-black">#{b.rank}</span>
               <span className="text-[10px] font-bold max-w-[74px] truncate">{b.nickname}</span>
-              <span className="px-1 py-[1px] rounded bg-black/35 text-[8.5px] font-black text-amber-300">
-                Lv.{b.level}
+              <span
+                className={`px-1 py-[1px] rounded text-[8.5px] font-black ${
+                  b.rank <= 3 ? 'bg-black/20 text-slate-950' : 'bg-black/40 text-amber-300'
+                }`}
+              >
+                V{b.lap}
               </span>
             </div>
+            {/* Mũi tên nhỏ chỉ trực tiếp xuống đỉnh đầu nhân vật */}
+            <div
+              className={`w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] -mt-0.5 ${
+                b.rank === 1
+                  ? 'border-t-amber-300'
+                  : b.rank === 2
+                    ? 'border-t-slate-200'
+                    : b.rank === 3
+                      ? 'border-t-orange-400'
+                      : 'border-t-white/70'
+              }`}
+            />
           </div>
         ))}
       </div>
