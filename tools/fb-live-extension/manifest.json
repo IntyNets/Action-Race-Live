@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Tự Động Kết Nối TikTok / Facebook Live - 3D Race Live",
+  "version": "2.3.0",
+  "description": "Tự động bắt bình luận & Sao Facebook Live truyền thẳng về Game Đua Chạy 3D.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://*.anfloral.com.vn/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://*.facebook.com/*",
+    "https://*.tiktok.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*",
+        "https://m.facebook.com/*"
+      ],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*",
+        "https://m.facebook.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

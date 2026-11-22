@@ -1,0 +1,35 @@
+# =============================================================================
+# DOCKER COMPOSE PRODUCTION CHO VPS (CÓ SẴN DOCKER & NGINX PROXY MANAGER - NPM)
+# =============================================================================
+services:
+  tiktok-live-3d-race:
+    image: ghcr.io/intynets/tiktok-live-3d-race:latest
+    container_name: tiktok-live-3d-race
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3007}:3002"
+    expose:
+      - 3002
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=3002
+      - TTS_VOICE=${TTS_VOICE:-vi-VN-HoaiMyNeural}
+      - USERS_FILE=/app/data/users.json
+    volumes:
+      # Lưu trữ bền vững toàn bộ Hồ sơ Người chơi (Cấp độ, Điểm, Đặc điểm nhân vật, Thú cưng VIP)
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - default
+      - npm_network
+
+networks:
+  npm_network:
+    external: true
+    name: web_network
