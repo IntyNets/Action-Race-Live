@@ -1387,13 +1387,18 @@ async function googleTtsFallback(text: string): Promise<Buffer> {
 
 const ttsCache = new Map<string, Buffer>();
 app.get('/api/tts', async (req, res) => {
-  const text = String(req.query.text || '').trim().slice(0, 260);
-  const voiceName = String(
-    req.query.voice || process.env.TTS_VOICE || 'vi-VN-HoaiMyNeural',
-  );
+  const text = String(req.query.text || '').trim().slice(0, 320);
+  const voiceParam = String(req.query.voice || '').toLowerCase();
+  const voiceName =
+    voiceParam === 'm' || voiceParam === 'namminh'
+      ? 'vi-VN-NamMinhNeural'
+      : voiceParam === 'f' || voiceParam === 'hoaimy'
+        ? 'vi-VN-HoaiMyNeural'
+        : String(process.env.TTS_VOICE || 'vi-VN-NamMinhNeural');
+  const hype = req.query.hype === '1';
   if (!text) return res.status(400).end();
 
-  const cacheKey = `${voiceName}|${text}`;
+  const cacheKey = `${voiceName}|${hype ? '1' : '0'}|${text}`;
   const cached = ttsCache.get(cacheKey);
   if (cached) {
     res.setHeader('Content-Type', 'audio/mpeg');
@@ -1410,8 +1415,9 @@ app.get('/api/tts', async (req, res) => {
           OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
         );
         const { audioStream } = tts.toStream(escapeXml(text), {
-          rate: '+8%',
-          pitch: '+2%',
+          rate: hype ? '+20%' : '+15%',
+          pitch: hype ? '+4%' : '+2%',
+          volume: hype ? '+45%' : '+30%',
         });
         const chunks: Buffer[] = [];
         await new Promise<void>((resolve, reject) => {
@@ -1427,7 +1433,7 @@ app.get('/api/tts', async (req, res) => {
       buf = await googleTtsFallback(text);
     }
 
-    if (ttsCache.size > 120) {
+    if (ttsCache.size > 160) {
       const firstKey = ttsCache.keys().next().value;
       if (firstKey) ttsCache.delete(firstKey);
     }

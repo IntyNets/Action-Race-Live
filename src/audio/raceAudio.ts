@@ -195,25 +195,88 @@ export function playFinishFanfareSfx() {
   });
 }
 
-// ---------- Giọng MC Bình Luận Viên (Edge TTS tiếng Việt) ----------
-export function speakCommentator(text: string, priority = false) {
-  if (!ttsEnabled || !text.trim()) return;
-  const now = Date.now();
-  if (!priority && now - lastTtsAt < 4500) return;
-  if (activeTtsAudio && !activeTtsAudio.paused && !priority) return;
-  lastTtsAt = now;
+export function playCrowdCheerSfx() {
+  if (!sfxEnabled) return;
+  const c = getCtx();
+  if (!c) return;
+  const t = c.currentTime;
+  // Tiếng hò reo khán đài + hợp âm chiến thắng ngắn
+  playEnvOsc(c, c.destination, 'triangle', 587.33, t, 0.18, 0.2, 880);
+  playEnvOsc(c, c.destination, 'triangle', 880, t + 0.08, 0.24, 0.22, 1174.66);
+}
+
+// ---------- Giọng MC Bình Luận Viên Songấu (Nam Minh & Hoài My - Edge TTS tiếng Việt) ----------
+let pendingTtsQueue: Array<{ text: string; hype: boolean; voice: 'm' | 'f' }> = [];
+let casterToggle: 'm' | 'f' = 'm';
+let captionListener: ((text: string) => void) | null = null;
+
+export function setCommentatorCaptionListener(fn: ((text: string) => void) | null) {
+  captionListener = fn;
+}
+
+function playNextInTtsQueue() {
+  if (!ttsEnabled || pendingTtsQueue.length === 0) return;
+  if (activeTtsAudio && !activeTtsAudio.paused) return;
+
+  const next = pendingTtsQueue.shift()!;
+  lastTtsAt = Date.now();
+  captionListener?.(next.text);
 
   try {
-    if (activeTtsAudio) {
-      activeTtsAudio.pause();
-      activeTtsAudio = null;
-    }
-    const url = `/api/tts?text=${encodeURIComponent(text.slice(0, 220))}`;
+    const url = `/api/tts?text=${encodeURIComponent(next.text.slice(0, 280))}&voice=${next.voice}&hype=${next.hype ? '1' : '0'}`;
     const audio = new Audio(url);
-    audio.volume = 0.95;
+    audio.volume = 1.0;
     activeTtsAudio = audio;
-    void audio.play().catch(() => {});
-  } catch {}
+    audio.onended = () => {
+      activeTtsAudio = null;
+      if (pendingTtsQueue.length > 0) {
+        setTimeout(playNextInTtsQueue, 180);
+      }
+    };
+    audio.onerror = () => {
+      activeTtsAudio = null;
+      if (pendingTtsQueue.length > 0) {
+        setTimeout(playNextInTtsQueue, 180);
+      }
+    };
+    void audio.play().catch(() => {
+      activeTtsAudio = null;
+    });
+  } catch {
+    activeTtsAudio = null;
+  }
+}
+
+export function speakCommentator(text: string, priority = false) {
+  const clean = text.trim();
+  if (!clean) return;
+  // Luôn cập nhật phụ đề BLV trên màn hình kể cả khi tắt âm thanh trên Dashboard
+  captionListener?.(clean);
+  if (!ttsEnabled) return;
+
+  const now = Date.now();
+  const isSpeaking = Boolean(activeTtsAudio && !activeTtsAudio.paused);
+
+  // Luân phiên 2 BLV Nam Minh & Hoài My để tạo không khí 2 bình luận viên tung hứng sôi động
+  casterToggle = casterToggle === 'm' ? 'f' : 'm';
+
+  if (priority) {
+    // Sự kiện quan trọng (Tặng quà / Vượt Top 1 / Về đích): ưu tiên đọc ngay hoặc xếp đầu hàng đợi
+    if (isSpeaking && pendingTtsQueue.length >= 2) {
+      pendingTtsQueue[0] = { text: clean, hype: true, voice: casterToggle };
+    } else if (isSpeaking) {
+      pendingTtsQueue.unshift({ text: clean, hype: true, voice: casterToggle });
+    } else {
+      pendingTtsQueue = [{ text: clean, hype: true, voice: casterToggle }];
+      playNextInTtsQueue();
+    }
+    return;
+  }
+
+  // Bình luận diễn biến định kỳ: nếu đang nói hoặc vừa mới nói < 2.2s thì bỏ qua để không chồng câu cũ
+  if (isSpeaking || pendingTtsQueue.length > 0 || now - lastTtsAt < 2200) return;
+  pendingTtsQueue.push({ text: clean, hype: false, voice: casterToggle });
+  playNextInTtsQueue();
 }
 
 if (typeof window !== 'undefined') {

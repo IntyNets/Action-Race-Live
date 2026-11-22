@@ -14,6 +14,7 @@ import { resolveAvatarColor } from './avatarColor';
 import { CameraDirector, CameraHudState } from './camera/CameraDirector';
 import {
   playCountdownBeep,
+  playCrowdCheerSfx,
   playFinishFanfareSfx,
   playJetpackSfx,
   playJoinSfx,
@@ -21,6 +22,7 @@ import {
   playSprintSfx,
   playVipDragonSfx,
   setAudioSettings,
+  setCommentatorCaptionListener,
   speakCommentator,
 } from '../audio/raceAudio';
 
@@ -131,6 +133,13 @@ export function useRaceEngine() {
   const wsRef = useRef<WebSocket | null>(null);
   const syncAccumRef = useRef<number>(0);
   const lastMasterSyncAtRef = useRef<number>(0);
+  const liveCommentAccumRef = useRef<number>(0);
+  const lobbyHypeDoneRef = useRef<boolean>(false);
+  const commentIdxRef = useRef<number>(0);
+  const lastJoinVoiceAtRef = useRef<number>(0);
+  const [commentatorText, setCommentatorText] = useState<string>(
+    '🎙️ Chào mừng cả nhà đến với Đấu Trường Đua Tốc Độ 3D! Bình luận bất kỳ hoặc thả tim để vào sân ngay!',
+  );
 
   const [mapId, setMapIdState] = useState<string>(getActiveMapId());
   const pendingMapRef = useRef<string | null>(null);
@@ -265,7 +274,7 @@ export function useRaceEngine() {
 
   const pushFeed = useCallback((text: string, tone: ActivityFeedItem['tone']) => {
     const id = feedSeqRef.current++;
-    setFeed((prev) => [{ id, text, tone }, ...prev].slice(0, 5));
+    setFeed((prev) => [{ id, text, tone }, ...prev].slice(0, 6));
   }, []);
 
   const showVipBanner = useCallback((evt: Omit<VipBannerEvent, 'id'>) => {
@@ -394,18 +403,37 @@ export function useRaceEngine() {
       setRacerCount(map.size);
       if (!isBot) {
         syncRacerProfilesToServer([racer]);
+        const nowMs = Date.now();
         if (saved) {
           playJoinSfx();
           pushFeed(
             `👑 Lv.${racer.level} ${racer.nickname} (${racer.points}đ${racer.petName ? ' · ' + racer.petName : ''}) đã trở lại đường đua!`,
             'join',
           );
+          if (nowMs - lastJoinVoiceAtRef.current > 3800) {
+            lastJoinVoiceAtRef.current = nowMs;
+            speakCommentator(
+              `Oa! Chào mừng cao thủ cấp ${racer.level} ${racer.nickname} đã trở lại đường đua${racer.petName ? ' cùng thú cưng ' + racer.petName.replace(/^[^\s]+\s/, '') : ''}!`,
+            );
+          }
         } else if (isMidRace) {
           playSprintSfx();
-          pushFeed(`⚡ ${racer.nickname} (Lv.1) vào đua cùng nhóm cuối + Tăng tốc nhập cuộc!`, 'sprint');
+          pushFeed(`⚡ ${racer.nickname} (Lv.1) lao vào đường đua + Kích hoạt Tia Sét Nhập Cuộc!`, 'sprint');
+          if (nowMs - lastJoinVoiceAtRef.current > 3800) {
+            lastJoinVoiceAtRef.current = nowMs;
+            speakCommentator(
+              `Tay đua ${racer.nickname} vừa nhảy vào cuộc đua và bật tia sét nhập cuộc bám đuổi đoàn đua!`,
+            );
+          }
         } else {
           playJoinSfx();
-          pushFeed(`🏁 ${racer.nickname} (Lv.1) đã vào đường đua!`, 'join');
+          pushFeed(`🏁 ${racer.nickname} (Lv.1) đã vào vạch xuất phát!`, 'join');
+          if (nowMs - lastJoinVoiceAtRef.current > 3800) {
+            lastJoinVoiceAtRef.current = nowMs;
+            speakCommentator(
+              `Chào mừng tay đua ${racer.nickname} đã lên vạch xuất phát! Chạm thả tim liên tục để chuẩn bị bứt tốc nhé!`,
+            );
+          }
         }
       }
       return { racer, created: true };
@@ -705,12 +733,15 @@ export function useRaceEngine() {
         });
       }
 
+      lobbyHypeDoneRef.current = false;
+      liveCommentAccumRef.current = 0;
+
       pushFeed(
-        `🚦 Ván mới (${totalLapsRef.current} vòng)! Bình luận bất kỳ để lên vạch xuất phát!`,
+        `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Bình luận bất kỳ hoặc thả tim để lên vạch xuất phát!`,
         'system',
       );
       speakCommentator(
-        `Ván đua ${totalLapsRef.current} vòng chuẩn bị bắt đầu! Cả nhà bình luận bất kỳ để xuất hiện nhân vật ngay nào!`,
+        `Chào mừng cả nhà đến với ván đua số ${matchNoRef.current}, chặng đua ${totalLapsRef.current} vòng! Hãy gõ bình luận bất kỳ hoặc chạm thả tim để xuất hiện nhân vật tại vạch xuất phát ngay nào!`,
       );
       pushRaceSync(true);
     },
@@ -729,13 +760,19 @@ export function useRaceEngine() {
     lastBeepSecRef.current = -1;
     announcedFinalLapRef.current = false;
     raceElapsedRef.current = 0;
+    liveCommentAccumRef.current = 0;
     lastTop1IdRef.current = '';
     setPhase('racing');
     setTimerSec(raceDurationRef.current);
     playCountdownBeep(true);
-    pushFeed(`🔥 XUẤT PHÁT ${totalLapsRef.current} VÒNG! Thả tim & tặng quà để bứt tốc!`, 'system');
+    playCrowdCheerSfx();
+    pushFeed(
+      `🔥 XUẤT PHÁT ${totalLapsRef.current} VÒNG! Thả tim bật Tia Sét & tặng quà hóa Rồng Thần!`,
+      'system',
+    );
     speakCommentator(
-      `Xuất phát! Đường đua uốn lượn ${totalLapsRef.current} vòng chính thức bắt đầu! Thả tim và tặng quà để bật tên lửa vượt cua ngay nào!`,
+      `Xuất phát rồi! Cổng đường đua ${totalLapsRef.current} vòng chính thức mở! Các tay đua đang lao vọt về khúc cua đầu tiên! Cả nhà mau thả tim và tặng quà để tiếp lửa bứt tốc nào!`,
+      true,
     );
     pushRaceSync(true);
   }, [fillBotsIfNeeded, pushFeed, pushRaceSync]);
@@ -750,6 +787,7 @@ export function useRaceEngine() {
     const winners = sorted.slice(0, 3);
     setPodiumTop3(winners);
     playFinishFanfareSfx();
+    playCrowdCheerSfx();
 
     // Cộng điểm kinh nghiệm (XP) & cập nhật Cấp Độ + Số trận thắng vào Hồ sơ người chơi đã lưu
     const bonusMap = new Map<string, { addPoints: number; addWin: number; addPodium: number }>();
@@ -778,9 +816,14 @@ export function useRaceEngine() {
     }
 
     if (winners[0]) {
-      pushFeed(`🏆 QUÁN QUÂN ${totalLapsRef.current} VÒNG: ${winners[0].nickname} (Lv.${winners[0].level})!`, 'dragon');
+      const top2Text = winners[1] ? `, Á quân là ${winners[1].nickname}` : '';
+      const top3Text = winners[2] ? ` và hạng ba thuộc về ${winners[2].nickname}` : '';
+      pushFeed(
+        `🏆 QUÁN QUÂN VÁN #${matchNoRef.current}: ${winners[0].nickname} (Lv.${winners[0].level})!`,
+        'dragon',
+      );
       speakCommentator(
-        `Chúc mừng quán quân ${winners[0].nickname} đã hoàn thành xuất sắc ${totalLapsRef.current} vòng đua! Ván mới sẽ mở sau 10 giây!`,
+        `Xin chúc mừng nhà vô địch ${winners[0].nickname} đã xuất sắc cán đích đầu tiên sau ${totalLapsRef.current} vòng đua nghẹt thở${top2Text}${top3Text}! Ván đua mới sẽ mở lại sau 10 giây nữa!`,
         true,
       );
     }
@@ -948,6 +991,7 @@ export function useRaceEngine() {
       if (coins >= 100) {
         applyBoost(racer, 'dragon', 10000, '🐉 RỒNG THẦN VIP');
         playVipDragonSfx();
+        playCrowdCheerSfx();
         cameraDirectorRef.current.pushEvent({
           type: 'MAJOR_GIFT_BOOST',
           userId: racer.id,
@@ -962,14 +1006,20 @@ export function useRaceEngine() {
           coins,
           tier: 'dragon',
         });
-        pushFeed(`🐉 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - HÓA RỒNG KHỔNG LỒ!`, 'dragon');
-        speakCommentator(
-          `Trời ơi quá đỉnh! ${racer.nickname} vừa tặng ${payload.giftName} cưỡi Rồng Thần Hoàng Kim phóng siêu tốc qua khúc cua!`,
-          true,
+        pushFeed(
+          `🐉 ĐẠI GIA ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - TRIỆU HỒI RỒNG THẦN HOÀNG KIM!`,
+          'dragon',
         );
+        const dragonLines = [
+          `Chấn động đường đua! Đại gia ${racer.nickname} vừa tung ${payload.giftName}, triệu hồi Rồng Thần Hoàng Kim bay vút qua mọi đối thủ!`,
+          `Trời ơi quá khủng khiếp! ${racer.nickname} vừa hóa Rồng Thần khổng lồ với ${coins} xu, tốc độ xé toạc không gian!`,
+          `Cả khán đài nổ tung! Cảm ơn ${racer.nickname} với siêu phẩm ${payload.giftName}, Rồng Thần đã xuất hiện thống trị bầu trời!`,
+        ];
+        speakCommentator(dragonLines[commentIdxRef.current++ % dragonLines.length], true);
       } else if (coins >= 11) {
         applyBoost(racer, 'rocket', 6000, '🚀 TÊN LỬA');
         playRocketSfx();
+        playCrowdCheerSfx();
         cameraDirectorRef.current.pushEvent({
           type: 'NORMAL_GIFT_BOOST',
           userId: racer.id,
@@ -984,8 +1034,16 @@ export function useRaceEngine() {
           coins,
           tier: 'rocket',
         });
-        pushFeed(`🚀 ${racer.nickname} cưỡi Tên Lửa vượt mặt (${coins} xu)!`, 'rocket');
-        speakCommentator(`${racer.nickname} vừa cưỡi tên lửa bứt phá cực nhanh!`);
+        pushFeed(
+          `🚀 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - PHÓNG TÊN LỬA SIÊU TỐC!`,
+          'rocket',
+        );
+        const rocketLines = [
+          `Bùng nổ tốc độ! ${racer.nickname} vừa kích hoạt Tên Lửa Siêu Tốc từ ${payload.giftName}, vượt mặt hàng loạt tay đua!`,
+          `Quá gắt! ${racer.nickname} cưỡi Tên Lửa phun lửa đỏ rực, lao như tên bắn về phía ngôi đầu!`,
+          `Cú bứt phá thần sầu của ${racer.nickname} với ${payload.giftName}! Ai có thể cản nổi quả tên lửa này đây?!`,
+        ];
+        speakCommentator(rocketLines[commentIdxRef.current++ % rocketLines.length], true);
       } else {
         applyBoost(racer, 'jetpack', 4000, '🎒 JETPACK');
         playJetpackSfx();
@@ -1003,7 +1061,15 @@ export function useRaceEngine() {
           coins,
           tier: 'jetpack',
         });
-        pushFeed(`🎒 ${racer.nickname} bật Jetpack bay lướt (${coins} xu)!`, 'jetpack');
+        pushFeed(
+          `🎒 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - BẬT JETPACK + 🐾 ${racer.petName}!`,
+          'jetpack',
+        );
+        const jetLines = [
+          `Cảm ơn ${racer.nickname} tặng ${payload.giftName}! Bật động cơ phản lực Jetpack và dẫn thú cưng bay vọt lên!`,
+          `Tuyệt vời! ${racer.nickname} vừa nạp nhiên liệu Jetpack từ ${payload.giftName}, phóng tia sét vượt qua khúc cua!`,
+        ];
+        speakCommentator(jetLines[commentIdxRef.current++ % jetLines.length], true);
       }
       pushRaceSync(true);
     },
@@ -1023,6 +1089,7 @@ export function useRaceEngine() {
 
   // Trang Bảng Điều Khiển (/) mặc định im lặng, chỉ Chế Độ Live (/?view=stage) phát tiếng giống npc-action-live
   useEffect(() => {
+    setCommentatorCaptionListener((txt) => setCommentatorText(txt));
     if (!IS_STAGE) {
       setAudioSettings({ bgm: false, sfx: false, tts: false });
     }
@@ -1092,6 +1159,9 @@ export function useRaceEngine() {
           setAutoBots(value);
         } else if (action === 'setDroneCam' && typeof value === 'boolean') {
           setDroneCamOnState(value);
+        } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
+          pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
+          speakCommentator(value.trim(), true);
         } else if (action === 'setAudio' && value && IS_STAGE) {
           setAudioSettings(value);
         }
@@ -1305,12 +1375,17 @@ export function useRaceEngine() {
         setPhase('countdown');
         setTimerSec(RACE_CONSTANTS.FINISH_COUNTDOWN_SECONDS);
         playFinishFanfareSfx();
+        playCrowdCheerSfx();
         cameraDirectorRef.current.pushEvent({
           type: 'FINISH_EVENT',
           label: '🏁 VỀ ĐÍCH',
           durationSec: RACE_CONSTANTS.FINISH_COUNTDOWN_SECONDS,
         });
-        pushFeed('🏁 ĐÃ CÓ NGƯỜI VỀ ĐÍCH! Đếm ngược 5 giây kết thúc trận!', 'dragon');
+        pushFeed('🏁 ĐÃ CÓ TAY ĐUA CÁN ĐÍCH! Đếm ngược 5 giây cuối tranh Top 3!', 'dragon');
+        speakCommentator(
+          'Đã có người đầu tiên chạm vạch đích rồi! Chỉ còn đúng 5 giây nước rút cuối cùng để phân định Top 3!',
+          true,
+        );
       }
 
       const list = Array.from(map.values());
@@ -1324,16 +1399,34 @@ export function useRaceEngine() {
         list[i].rank = i + 1;
       }
 
-      // Phát hiện sự kiện Vượt Lên Dẫn Đầu (OVERTAKE_EVENT) sau 5 giây đầu trận
+      // Bình luận khuấy động phòng chờ Lobby ở mốc 7 giây trước khi xuất phát
+      if (phaseRef.current === 'lobby' && !lobbyHypeDoneRef.current && timerRef.current <= 7.5 && timerRef.current > 3.5) {
+        lobbyHypeDoneRef.current = true;
+        const countNow = list.length;
+        const hypeLobby =
+          countNow > 0
+            ? `Chỉ còn 7 giây nữa là xuất phát! Đã có ${countNow} tay đua sẵn sàng, cả nhà mau bình luận thêm để nhảy vào vạch xuất phát nào!`
+            : `Sắp xuất phát rồi cả nhà ơi! Gõ phím bình luận bất kỳ hoặc thả tim để nhân vật của bạn vào đường đua ngay!`;
+        pushFeed(`🎙️ ${hypeLobby}`, 'system');
+        speakCommentator(hypeLobby);
+      }
+
+      // Phát hiện sự kiện Vượt Lên Dẫn Đầu (OVERTAKE_EVENT) + Bình luận trực tiếp liên tục mỗi 8.2 giây
       if (phaseRef.current === 'racing') {
         raceElapsedRef.current += clampedDt;
+        liveCommentAccumRef.current += clampedDt;
         const currTop1 = list[0];
+        const currTop2 = list[1];
+        const currTop3 = list[2];
+
         if (currTop1) {
           if (
-            raceElapsedRef.current > 5 &&
+            raceElapsedRef.current > 4.5 &&
             lastTop1IdRef.current &&
             lastTop1IdRef.current !== currTop1.id
           ) {
+            const prevLeader = map.get(lastTop1IdRef.current);
+            playCrowdCheerSfx();
             cameraDirectorRef.current.pushEvent({
               type: 'OVERTAKE_EVENT',
               userId: currTop1.id,
@@ -1341,9 +1434,42 @@ export function useRaceEngine() {
               label: '⚡ VƯỢT LÊN TOP 1!',
               durationSec: 2.3,
             });
-            pushFeed(`🔥 ${currTop1.nickname} vừa vượt lên chiếm TOP 1!`, 'sprint');
+            const overtakeLines = [
+              `Cú lật kèo nghẹt thở! ${currTop1.nickname} vừa lách qua khúc cua tuyệt đẹp, cướp ngôi Số 1 từ tay ${prevLeader?.nickname || 'đối thủ'}!`,
+              `Đổi ngôi dẫn đầu rồi cả nhà ơi! ${currTop1.nickname} đang phóng tia sét vươn lên thống trị Top 1!`,
+              `Pha vượt mặt quá đẳng cấp! ${currTop1.nickname} đã chính thức chiếm lĩnh vị trí dẫn đầu đoàn đua!`,
+            ];
+            const line = overtakeLines[commentIdxRef.current++ % overtakeLines.length];
+            pushFeed(`🔥 ${currTop1.nickname} bứt phá chiếm ngôi TOP 1!`, 'sprint');
+            speakCommentator(line, true);
+            liveCommentAccumRef.current = 0; // Reset nhịp bình luận định kỳ sau pha vượt Top 1
           }
           lastTop1IdRef.current = currTop1.id;
+        }
+
+        // Bình luận viên tường thuật diễn biến trực tiếp mỗi 8.2 giây suốt chặng đua
+        if (liveCommentAccumRef.current >= 8.2 && currTop1) {
+          liveCommentAccumRef.current = 0;
+          const gap12 = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 0;
+          const pct = Math.min(99, Math.max(1, Math.round((currTop1.z / totalRaceDist) * 100)));
+          const boostingRacer = list.find((r) => r.boost !== 'none' && !r.isBot) || list.find((r) => r.boost !== 'none');
+          const mode = commentIdxRef.current++ % 5;
+          let playByPlay = '';
+
+          if (boostingRacer && mode === 0) {
+            playByPlay = `Nhìn kìa! ${boostingRacer.nickname} đang bật tăng tốc phóng tia sét cực cháy ở vị trí hạng ${boostingRacer.rank}!`;
+          } else if (currTop2 && gap12 <= 10 && (mode === 1 || mode === 2)) {
+            playByPlay = `Kịch tính nghẹt thở! ${currTop1.nickname} và ${currTop2.nickname} đang kè sát nhau chỉ cách đúng ${gap12} mét! Ai thả tim nhanh hơn sẽ bứt lên dẫn đầu!`;
+          } else if (currTop2 && currTop3 && mode === 2) {
+            playByPlay = `Cuộc đua Tam Hùng siêu gay cấn! Dẫn đầu là ${currTop1.nickname}, bám sát phía sau là ${currTop2.nickname} và ${currTop3.nickname} ở vòng ${currTop1.lap}!`;
+          } else if (currTop2 && gap12 > 10 && mode === 3) {
+            playByPlay = `${currTop1.nickname} đang giữ vững ngôi đầu với ${pct} phần trăm chặng đường, bỏ xa ${currTop2.nickname} ${gap12} mét! Có đại gia nào tung Tên Lửa hay Rồng Thần để lật kèo không đây?!`;
+          } else {
+            playByPlay = `Đoàn đua ${list.length} tay đua đang ôm cua tốc độ cao ở vòng ${currTop1.lap} trên ${totalLapsRef.current}! Cả nhà chạm thả tim liên tục và bình luận để kích hoạt tia sét The Flash nhé!`;
+          }
+
+          pushFeed(`🎙️ BLV: ${playByPlay}`, 'system');
+          speakCommentator(playByPlay, false);
         }
       }
 
@@ -1643,6 +1769,15 @@ export function useRaceEngine() {
     [postControl],
   );
 
+  const speakCustom = useCallback(
+    (text: string) => {
+      const clean = text.trim();
+      if (!clean) return;
+      postControl('speak', clean);
+    },
+    [postControl],
+  );
+
   return {
     racersRef,
     phaseRef,
@@ -1664,6 +1799,8 @@ export function useRaceEngine() {
     leaderProgress,
     vipBanner,
     feed,
+    commentatorText,
+    speakCustom,
     liveStatus,
     savedUsers,
     autoBots,

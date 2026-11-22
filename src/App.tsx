@@ -42,6 +42,8 @@ export default function App() {
     minimapDots,
     vipBanner,
     feed,
+    commentatorText,
+    speakCustom,
     liveStatus,
     savedUsers,
     autoBots,
@@ -102,6 +104,7 @@ export default function App() {
   const [copiedBridge, setCopiedBridge] = useState(false);
   const [connMsg, setConnMsg] = useState('');
   const [quickJoinName, setQuickJoinName] = useState('');
+  const [customSpeakInput, setCustomSpeakInput] = useState('');
   const [bgmOn, setBgmOn] = useState(true);
   const [sfxOn, setSfxOn] = useState(true);
   const [ttsOn, setTtsOn] = useState(true);
@@ -528,29 +531,48 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================== BOTTOM HUD (Chừa vùng an toàn cho TikTok Live UI phía dưới) ==================== */}
+      {/* ==================== BOTTOM HUD (Chừa vùng an toàn cho Live UI phía dưới) ==================== */}
       <div
-        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/45 to-transparent ${
+        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/95 via-slate-950/55 to-transparent ${
           IS_STAGE ? 'pb-14' : 'pb-3'
         }`}
       >
-        <div className="flex flex-col gap-1 items-start">
-          {feed.slice(0, 1).map((item) => (
+        {/* Các thẻ sự kiện tương tác sôi động (giới hạn chiều rộng để không đè lên Drone Cam bên phải) */}
+        <div className="flex flex-col gap-1 items-start max-w-[66%]">
+          {feed.slice(0, 2).map((item, idx) => (
             <div
               key={item.id}
-              className={`px-2.5 py-1 rounded-full text-[10.5px] font-bold backdrop-blur-md border shadow max-w-[92%] truncate ${item.tone === 'dragon'
-                  ? 'bg-amber-500/85 border-yellow-200 text-slate-950'
+              className={`px-2.5 py-1 rounded-full text-[10.5px] font-bold backdrop-blur-md border shadow max-w-full truncate transition-all ${
+                idx === 0 ? 'opacity-100 scale-100' : 'opacity-80 scale-95 origin-left'
+              } ${
+                item.tone === 'dragon'
+                  ? 'bg-amber-500/90 border-yellow-200 text-slate-950 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
                   : item.tone === 'rocket'
-                    ? 'bg-rose-600/85 border-pink-300 text-white'
+                    ? 'bg-rose-600/90 border-pink-300 text-white'
                     : item.tone === 'jetpack'
-                      ? 'bg-sky-600/85 border-sky-200 text-white'
-                      : 'bg-slate-950/70 border-white/15 text-slate-100'
-                }`}
+                      ? 'bg-sky-600/90 border-sky-200 text-white'
+                      : item.tone === 'sprint'
+                        ? 'bg-cyan-500/85 border-cyan-200 text-slate-950'
+                        : 'bg-slate-950/80 border-white/20 text-slate-100'
+              }`}
             >
               {item.text}
             </div>
           ))}
         </div>
+
+        {/* Thanh Bình Luận Viên Thể Thao Trực Tiếp (Live Caster Subtitle Ticker) */}
+        {commentatorText && (
+          <div className="rounded-xl bg-gradient-to-r from-amber-500/20 via-slate-950/85 to-slate-950/85 border border-amber-400/50 backdrop-blur-md px-2.5 py-1.5 shadow-lg flex items-center gap-2">
+            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
+              🎙️ BLV LIVE
+            </span>
+            <span className="text-[10.5px] font-bold text-amber-100 line-clamp-2 leading-snug">
+              {commentatorText}
+            </span>
+          </div>
+        )}
 
         <div className="rounded-xl bg-slate-950/75 border border-white/15 backdrop-blur-md px-2.5 py-1.5 shadow-lg text-center flex flex-col gap-0.5">
           <div className="text-[10px] font-bold text-slate-200">
@@ -1340,11 +1362,16 @@ export default function App() {
               )}
             </section>
 
-            {/* 5. Điều khiển Âm Thanh cho trang Live */}
+            {/* 5. Điều khiển Âm Thanh & Bình Luận Viên Thể Thao Trực Tiếp */}
             <section className="rounded-2xl bg-slate-900/90 border border-white/10 p-4 flex flex-col gap-3">
-              <h2 className="text-sm font-black text-emerald-300">
-                🔊 Âm Thanh Chế Độ Live (/?view=stage)
-              </h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-black text-emerald-300">
+                  🔊 Âm Thanh & 🎙️ BLV Thể Thao Sôi Động (/?view=stage)
+                </h2>
+                <span className="text-[10.5px] text-amber-300 font-bold">
+                  Song tấu 2 BLV Nam Minh & Hoài My
+                </span>
+              </div>
               <div className="grid grid-cols-3 gap-2 text-xs font-semibold">
                 <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-white/10 cursor-pointer">
                   <span>🎵 Nhạc nền</span>
@@ -1355,7 +1382,7 @@ export default function App() {
                   />
                 </label>
                 <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-white/10 cursor-pointer">
-                  <span>💥 SFX</span>
+                  <span>💥 SFX & Khán đài</span>
                   <input
                     type="checkbox"
                     checked={sfxOn}
@@ -1363,13 +1390,92 @@ export default function App() {
                   />
                 </label>
                 <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-white/10 cursor-pointer">
-                  <span>🎙️ MC Voice</span>
+                  <span>🎙️ Giọng BLV</span>
                   <input
                     type="checkbox"
                     checked={ttsOn}
                     onChange={() => handleAudioToggle('tts')}
                   />
                 </label>
+              </div>
+
+              {/* Ô nhập câu cho BLV đọc trực tiếp & các nút Hype khuấy động phòng Live */}
+              <div className="rounded-xl bg-slate-950/75 border border-white/10 p-3 flex flex-col gap-2">
+                <div className="text-xs font-bold text-amber-300">
+                  🎙️ Cho BLV Hô Vang Trực Tiếp Trên Sóng Live:
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customSpeakInput}
+                    onChange={(e) => setCustomSpeakInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && customSpeakInput.trim()) {
+                        speakCustom(customSpeakInput);
+                        setCustomSpeakInput('');
+                      }
+                    }}
+                    placeholder="Gõ câu bất kỳ để BLV hô vang trên trang Live..."
+                    className="flex-1 rounded-lg bg-slate-900 border border-white/15 px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customSpeakInput.trim()) return;
+                      speakCustom(customSpeakInput);
+                      setCustomSpeakInput('');
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black transition"
+                  >
+                    🔊 Đọc Ngay
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-0.5 text-[11px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakCustom(
+                        'Cả nhà ơi chạm tay thả tim cháy màn hình để kích hoạt tia sét The Flash bứt tốc vượt cua nào!',
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 transition"
+                  >
+                    ⚡ Kêu gọi Thả tim
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakCustom(
+                        'Ai chưa vào sân thì gõ ngay phím 1 hoặc bình luận bất kỳ để xuất hiện nhân vật đua cùng cả nhà nhé!',
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 transition"
+                  >
+                    👋 Kêu gọi Vào đua
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakCustom(
+                        'Chỉ cần 1 bông hoa hồng là nhận ngay Thú Cưng VIP tăng 18 phần trăm tốc độ! Có đại gia nào tung Tên Lửa hay Rồng Thần lật kèo không đây?!',
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 transition"
+                  >
+                    🎁 Kêu gọi Tặng quà & Pet VIP
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakCustom(
+                        'Khúc cua tử thần phía trước đang cực kỳ gay cấn! Ngôi vị quán quân vẫn chưa ngã ngũ đâu cả nhà ơi!',
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/40 text-rose-200 transition"
+                  >
+                    🔥 Khuấy động Đua Top
+                  </button>
+                </div>
               </div>
             </section>
           </div>
