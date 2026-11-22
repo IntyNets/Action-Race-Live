@@ -176,11 +176,14 @@ const emptyLiveStatus = (fb: FacebookLiveStats = emptyFbStats()): LiveStatusStat
 
 let tiktokConn: InstanceType<typeof TikTokLiveConnection> | null = null;
 let liveStatus: LiveStatusState = emptyLiveStatus();
+let latestRaceSnapshot: Record<string, unknown> | null = null;
 
-// ---------- WebSocket Server (/ws) đẩy sự kiện độ trễ < 0.1s sang Frontend ----------
+// ---------- SSE (/api/tiktok/events giống npc-action-live) + WebSocket (/ws) ----------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const wsClients = new Set<WebSocket>();
+let sseClients: express.Response[] = [];
+let eventSeq = 1;
 
 server.on('upgrade', (req, socket, head) => {
   if (req.url && req.url.startsWith('/ws')) {
@@ -191,24 +194,94 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 function broadcastWs(type: string, data: unknown) {
-  const payload = JSON.stringify({ type, data, ts: Date.now() });
+  const eid = eventSeq++;
+  const ts = Date.now();
+  const enriched =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? { ...(data as Record<string, unknown>), _eid: eid }
+      : data;
+
+  // 1) Đẩy qua SSE (/api/tiktok/events - tương thích 100% Nginx Proxy Manager / Cloudflare như npc-action-live)
+  const ssePayload = `event: ${type}\ndata: ${JSON.stringify(enriched)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(ssePayload);
+    } catch {}
+  }
+
+  // 2) Đẩy qua WebSocket (/ws)
+  const wsPayload = JSON.stringify({ type, data: enriched, eid, ts });
   for (const ws of wsClients) {
     if (ws.readyState === WebSocket.OPEN) {
       try {
-        ws.send(payload);
+        ws.send(wsPayload);
       } catch {}
     }
   }
 }
+
+app.get('/api/tiktok/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Tắt bộ đệm trên Nginx Proxy Manager để sự kiện đẩy về tức thì
+  res.flushHeaders?.();
+  res.write(`event: status\ndata: ${JSON.stringify(liveStatus)}\n\n`);
+  res.write(`event: users\ndata: ${JSON.stringify(getSortedUsersList())}\n\n`);
+  if (latestRaceSnapshot) {
+    res.write(`event: raceSync\ndata: ${JSON.stringify(latestRaceSnapshot)}\n\n`);
+  }
+  sseClients.push(res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': keep-alive\n\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 20000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients = sseClients.filter((c) => c !== res);
+  });
+});
 
 wss.on('connection', (ws) => {
   wsClients.add(ws);
   try {
     ws.send(JSON.stringify({ type: 'status', data: liveStatus, ts: Date.now() }));
     ws.send(JSON.stringify({ type: 'users', data: getSortedUsersList(), ts: Date.now() }));
+    if (latestRaceSnapshot) {
+      ws.send(JSON.stringify({ type: 'raceSync', data: latestRaceSnapshot, ts: Date.now() }));
+    }
   } catch {}
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(String(raw));
+      if (msg?.type === 'raceSync' && msg.data && typeof msg.data === 'object') {
+        latestRaceSnapshot = msg.data;
+        broadcastWs('raceSync', msg.data);
+      }
+    } catch {}
+  });
   ws.on('close', () => wsClients.delete(ws));
   ws.on('error', () => wsClients.delete(ws));
+});
+
+// Đồng bộ trạng thái cuộc đua 100% giữa Bảng Điều Khiển (/) và Màn Hình Live (/?view=stage)
+app.post('/api/race/sync', (req, res) => {
+  const snap = req.body;
+  if (!snap || typeof snap !== 'object') {
+    return res.status(400).json({ success: false });
+  }
+  latestRaceSnapshot = snap;
+  broadcastWs('raceSync', snap);
+  res.json({ success: true });
+});
+
+app.get('/api/race/sync', (_req, res) => {
+  res.json({ success: true, data: latestRaceSnapshot });
 });
 
 // ---------- API Health & Status ----------
@@ -216,7 +289,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     uptime: Math.floor(process.uptime()),
-    clients: wsClients.size,
+    clients: wsClients.size + sseClients.length,
     savedUsers: Object.keys(usersStore).length,
     liveStatus,
   });
@@ -316,9 +389,23 @@ app.post('/api/users/sync', (req, res) => {
 
 // ---------- Kết nối & Ngắt kết nối TikTok LIVE (proto v3 giống npc-action-live) ----------
 const userOf = (data: any) =>
-  String(data?.user?.displayId || data?.user?.uniqueId || data?.uniqueId || 'viewer');
+  String(
+    data?.user?.displayId ||
+      data?.user?.uniqueId ||
+      data?.uniqueId ||
+      data?.user?.userId ||
+      data?.userId ||
+      'viewer',
+  );
 const nickOf = (data: any) =>
-  String(data?.user?.nickname || data?.nickname || data?.uniqueId || 'Tay đua');
+  String(
+    data?.user?.nickname ||
+      data?.nickname ||
+      data?.user?.displayId ||
+      data?.user?.uniqueId ||
+      data?.uniqueId ||
+      'Tay đua',
+  );
 const avatarOf = (data: any) =>
   String(
     data?.user?.avatarThumb?.urlList?.[0] ||
@@ -354,7 +441,7 @@ app.post('/api/tiktok/connect', async (req, res) => {
     enableExtendedGiftInfo: false,
   });
 
-  conn.on(ControlEvent.CONNECTED, (state: { roomId?: string }) => {
+  conn.on(ControlEvent.CONNECTED, (state: any) => {
     console.log(`[TikTok] Đã kết nối @${cleanUser}, room ${state?.roomId}`);
     liveStatus = {
       ...liveStatus,
@@ -364,6 +451,23 @@ app.post('/api/tiktok/connect', async (req, res) => {
       error: '',
     };
     broadcastWs('status', liveStatus);
+
+    // Tự động cho chủ phòng (@cleanUser) xuất hiện trên đường đua ngay khi kết nối thành công!
+    const owner = state?.roomInfo?.owner || state?.roomInfo?.host;
+    const hostNick = String(owner?.nickname || owner?.displayId || cleanUser);
+    const hostAvatar = String(
+      owner?.avatarThumb?.urlList?.[0] ||
+        owner?.profilePicture?.url?.[0] ||
+        '',
+    );
+    broadcastWs('member', {
+      userId: cleanUser,
+      username: cleanUser,
+      nickname: hostNick,
+      avatar: hostAvatar,
+      platform: 'tiktok',
+      timestamp: Date.now(),
+    });
   });
 
   conn.on(ControlEvent.DISCONNECTED, () => {

@@ -101,6 +101,7 @@ export default function App() {
   const [fbBusy, setFbBusy] = useState(false);
   const [copiedBridge, setCopiedBridge] = useState(false);
   const [connMsg, setConnMsg] = useState('');
+  const [quickJoinName, setQuickJoinName] = useState('');
   const [bgmOn, setBgmOn] = useState(true);
   const [sfxOn, setSfxOn] = useState(true);
   const [ttsOn, setTtsOn] = useState(true);
@@ -934,6 +935,76 @@ export default function App() {
                   {connMsg || liveStatus.error || fb?.error}
                 </p>
               )}
+
+              {/* Hướng dẫn cách Join vào Game & Ô Thêm Nhanh Tay Đua */}
+              <div className="rounded-xl bg-slate-950/80 border border-sky-400/30 p-3 flex flex-col gap-2 text-xs">
+                <div className="font-black text-sky-300">
+                  🏃 Cách Tham Gia Vào Đường Đua (Tự động 100% khi đang Live):
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1 list-disc list-inside leading-relaxed">
+                  <li>
+                    <b>Cách 1 (Khán giả trên TikTok / Facebook Live):</b> Chỉ cần <b>Bình luận bất kỳ</b> (vd: <code>1</code>, <code>join</code>, <code>đua</code>...), <b>Vào phòng live</b>, <b>Thả tim ❤️</b>, <b>Follow ➕</b> hoặc <b>Tặng quà / Sao 🎁</b> là nhân vật mang tên & màu Avatar của người đó <b>tự động xuất hiện ngay trên đường đua</b>!
+                  </li>
+                  <li>
+                    <b>Cách 2 (Chủ phòng / Thêm tay đua thủ công):</b> Khi bấm <b>Kết nối TikTok</b>, nhân vật của chủ kênh tự động vào sân. Hoặc gõ tên bất kỳ vào ô dưới đây để cho vào đua ngay:
+                  </li>
+                </ul>
+                <div className="flex gap-2 pt-0.5">
+                  <input
+                    type="text"
+                    value={quickJoinName}
+                    onChange={(e) => setQuickJoinName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && quickJoinName.trim()) {
+                        const name = quickJoinName.trim().replace(/^@+/, '');
+                        const uid = name.normalize('NFKD').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || `user_${Date.now()}`;
+                        void fetch('/api/test/emit', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            type: 'chat',
+                            data: {
+                              userId: uid,
+                              username: uid,
+                              nickname: name,
+                              comment: 'join',
+                              platform: platformTab,
+                            },
+                          }),
+                        });
+                        setQuickJoinName('');
+                      }
+                    }}
+                    placeholder="Nhập Tên hoặc @username để cho vào đua ngay (vd: Phùng Quý)..."
+                    className="flex-1 rounded-lg bg-slate-900 border border-white/15 px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const raw = (quickJoinName.trim() || tiktokIdInput.trim() || 'Chủ Phòng Live').replace(/^@+/, '');
+                      const uid = raw.normalize('NFKD').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || `user_${Date.now()}`;
+                      void fetch('/api/test/emit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          type: 'chat',
+                          data: {
+                            userId: uid,
+                            username: uid,
+                            nickname: raw,
+                            comment: 'join',
+                            platform: platformTab,
+                          },
+                        }),
+                      });
+                      setQuickJoinName('');
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition whitespace-nowrap"
+                  >
+                    ➕ Vào Đua Ngay
+                  </button>
+                </div>
+              </div>
 
               {/* Hộp Link Stage Đa Nền Tảng chống quét AI (chuẩn npc-action-live) */}
               <div className="space-y-1.5 rounded-xl bg-slate-950/75 p-2.5 text-[11px] text-slate-300 border border-white/10">

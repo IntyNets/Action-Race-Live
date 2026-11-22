@@ -125,6 +125,12 @@ export function useRaceEngine() {
   const feedSeqRef = useRef<number>(1);
   const bannerSeqRef = useRef<number>(1);
   const mockSeqRef = useRef<number>(1);
+  const tabIdRef = useRef<string>(Math.random().toString(36).slice(2, 10));
+  const matchNoRef = useRef<number>(1);
+  const droneCamOnRef = useRef<boolean>(true);
+  const wsRef = useRef<WebSocket | null>(null);
+  const syncAccumRef = useRef<number>(0);
+  const lastMasterSyncAtRef = useRef<number>(0);
 
   const [mapId, setMapIdState] = useState<string>(getActiveMapId());
   const pendingMapRef = useRef<string | null>(null);
@@ -430,11 +436,227 @@ export function useRaceEngine() {
     if (current >= targetCount) return;
     const needed = targetCount - current;
     for (let i = 0; i < needed; i++) {
-      const name = BOT_NAMES[(i + Math.floor(Math.random() * BOT_NAMES.length)) % BOT_NAMES.length];
-      const botId = `bot_${Date.now()}_${i}_${Math.floor(Math.random() * 999)}`;
-      ensureRacer(botId, botId, `${name}`, '', true);
+      const name = BOT_NAMES[i % BOT_NAMES.length];
+      const botId = `bot_slot_${i + 1}`;
+      ensureRacer(botId, botId, name, '', true);
     }
   }, [ensureRacer]);
+
+  // Phát gói đồng bộ trạng thái cuộc đua từ Bảng Điều Khiển (/) sang Màn Hình Live (/?view=stage)
+  const pushRaceSync = useCallback((immediate = false) => {
+    if (IS_STAGE) return;
+    const now = performance.now();
+    const racersList = Array.from(racersRef.current.values()).map((r) => ({
+      id: r.id,
+      username: r.username,
+      nickname: r.nickname,
+      avatar: r.avatar,
+      platform: r.platform || 'tiktok',
+      isBot: Boolean(r.isBot),
+      level: r.level || 1,
+      points: r.points || 0,
+      wins: r.wins || 0,
+      matches: r.matches || 1,
+      characterIdx: r.characterIdx,
+      petIdx: r.petIdx,
+      petName: r.petName,
+      petSpeedBonus: r.petSpeedBonus,
+      z: Math.round(r.z * 100) / 100,
+      lap: r.lap,
+      x: Math.round(r.x * 100) / 100,
+      targetX: Math.round(r.targetX * 100) / 100,
+      baseSpeed: r.baseSpeed,
+      speed: Math.round(r.speed * 100) / 100,
+      shirtColor: r.shirtColor,
+      pantsColor: r.pantsColor,
+      skinColor: r.skinColor,
+      hatColor: r.hatColor,
+      boost: r.boost,
+      boostRemainMs: r.boost !== 'none' ? Math.max(0, Math.round(r.boostUntil - now)) : 0,
+      boostLabel: r.boostLabel,
+      isFinished: r.finishedAt !== null,
+      rank: r.rank,
+      coinsSpent: r.coinsSpent,
+    }));
+
+    const snap = {
+      senderId: tabIdRef.current,
+      matchNo: matchNoRef.current,
+      phase: phaseRef.current,
+      timer: Math.round(timerRef.current * 100) / 100,
+      mapId: getActiveMapId(),
+      totalLaps: totalLapsRef.current,
+      raceDuration: raceDurationRef.current,
+      autoBots: autoBotsRef.current,
+      droneCamOn: droneCamOnRef.current,
+      racers: racersList,
+    };
+
+    if (!immediate && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(JSON.stringify({ type: 'raceSync', data: snap }));
+        return;
+      } catch {}
+    }
+
+    void fetch('/api/race/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snap),
+    }).catch(() => {});
+  }, []);
+
+  const applyRaceSync = useCallback((snap: any) => {
+    if (!snap || typeof snap !== 'object') return;
+    if (snap.senderId === tabIdRef.current) return;
+    // Chỉ trang Stage (/?view=stage) nhận đồng bộ từ trang Dashboard (/), hoặc trang mới mở nhận snapshot lần đầu
+    if (!IS_STAGE && lastMasterSyncAtRef.current > 0) return;
+    lastMasterSyncAtRef.current = performance.now();
+
+    if (typeof snap.mapId === 'string' && snap.mapId !== getActiveMapId()) {
+      setActiveMap(snap.mapId);
+      setMapIdState(getActiveMapId());
+    }
+    if (typeof snap.matchNo === 'number') {
+      matchNoRef.current = snap.matchNo;
+      setMatchNo(snap.matchNo);
+    }
+    if (typeof snap.totalLaps === 'number' && snap.totalLaps !== totalLapsRef.current) {
+      totalLapsRef.current = snap.totalLaps;
+      setTotalLapsState(snap.totalLaps);
+    }
+    if (typeof snap.raceDuration === 'number' && snap.raceDuration !== raceDurationRef.current) {
+      raceDurationRef.current = snap.raceDuration;
+      setRaceDurationState(snap.raceDuration);
+    }
+    if (typeof snap.autoBots === 'boolean' && snap.autoBots !== autoBotsRef.current) {
+      autoBotsRef.current = snap.autoBots;
+      setAutoBotsState(snap.autoBots);
+    }
+    if (typeof snap.droneCamOn === 'boolean' && snap.droneCamOn !== droneCamOnRef.current) {
+      droneCamOnRef.current = snap.droneCamOn;
+      setDroneCamOnState(snap.droneCamOn);
+    }
+    if (typeof snap.timer === 'number') {
+      timerRef.current = snap.timer;
+    }
+
+    const prevPhase = phaseRef.current;
+    if (
+      snap.phase === 'lobby' ||
+      snap.phase === 'racing' ||
+      snap.phase === 'countdown' ||
+      snap.phase === 'podium'
+    ) {
+      if (prevPhase !== snap.phase) {
+        phaseRef.current = snap.phase;
+        setPhase(snap.phase);
+        if (snap.phase === 'lobby') {
+          cameraDirectorRef.current.resetForNewMatch();
+          setPodiumTop3([]);
+        }
+      }
+    }
+
+    if (Array.isArray(snap.racers)) {
+      const now = performance.now();
+      const map = racersRef.current;
+      const incomingIds = new Set<string>();
+
+      for (const sr of snap.racers) {
+        if (!sr || !sr.id) continue;
+        incomingIds.add(sr.id);
+        const existing = map.get(sr.id);
+        if (!existing) {
+          map.set(sr.id, {
+            id: sr.id,
+            username: sr.username || sr.id,
+            nickname: sr.nickname || 'Tay Đua',
+            avatar: sr.avatar || makeAvatarDataUrl(sr.nickname || 'R', sr.shirtColor || 0x3b82f6),
+            platform: sr.platform || 'tiktok',
+            isBot: Boolean(sr.isBot),
+            level: sr.level || 1,
+            points: sr.points || 0,
+            wins: sr.wins || 0,
+            matches: sr.matches || 1,
+            characterIdx: sr.characterIdx ?? 0,
+            petIdx: sr.petIdx ?? null,
+            petName: sr.petName || '',
+            petSpeedBonus: sr.petSpeedBonus || 0,
+            z: Number(sr.z || 0),
+            lap: Number(sr.lap || 1),
+            x: Number(sr.x || 0),
+            targetX: Number(sr.targetX || 0),
+            baseSpeed: Number(sr.baseSpeed || 20),
+            speed: Number(sr.speed || 0),
+            shirtColor: Number(sr.shirtColor || 0x3b82f6),
+            pantsColor: Number(sr.pantsColor || 0x1e293b),
+            skinColor: Number(sr.skinColor || 0xfde68a),
+            hatColor: Number(sr.hatColor || 0xfacc15),
+            likeEnergy: 0,
+            lastChatBoostAt: 0,
+            lastInteractAt: now,
+            boost: sr.boost || 'none',
+            boostUntil: sr.boost && sr.boost !== 'none' ? now + Number(sr.boostRemainMs || 1500) : 0,
+            boostLabel: sr.boostLabel || '',
+            finishedAt: sr.isFinished ? now : null,
+            rank: Number(sr.rank || 1),
+            coinsSpent: Number(sr.coinsSpent || 0),
+          });
+        } else {
+          existing.nickname = sr.nickname || existing.nickname;
+          if (sr.avatar && sr.avatar.startsWith('http')) existing.avatar = sr.avatar;
+          existing.level = sr.level || existing.level;
+          existing.points = sr.points ?? existing.points;
+          existing.wins = sr.wins ?? existing.wins;
+          existing.characterIdx = sr.characterIdx ?? existing.characterIdx;
+          existing.petIdx = sr.petIdx ?? existing.petIdx;
+          existing.petName = sr.petName ?? existing.petName;
+          existing.petSpeedBonus = sr.petSpeedBonus ?? existing.petSpeedBonus;
+          existing.shirtColor = sr.shirtColor ?? existing.shirtColor;
+          existing.baseSpeed = sr.baseSpeed ?? existing.baseSpeed;
+          existing.speed = sr.speed ?? existing.speed;
+          existing.targetX = sr.targetX ?? existing.targetX;
+          existing.lap = sr.lap ?? existing.lap;
+          existing.rank = sr.rank ?? existing.rank;
+          existing.coinsSpent = sr.coinsSpent ?? existing.coinsSpent;
+
+          // Nội suy mượt vị trí z & x để 60 FPS không bị khựng nhưng vẫn khớp 100% với màn hình Preview
+          const targetZ = Number(sr.z ?? existing.z);
+          const targetX = Number(sr.x ?? existing.x);
+          if (Math.abs(targetZ - existing.z) > 4.0 || phaseRef.current === 'lobby') {
+            existing.z = targetZ;
+            existing.x = targetX;
+          } else {
+            existing.z += (targetZ - existing.z) * 0.45;
+            existing.x += (targetX - existing.x) * 0.45;
+          }
+
+          if (sr.boost && sr.boost !== 'none') {
+            existing.boost = sr.boost;
+            existing.boostUntil = now + Number(sr.boostRemainMs || 1500);
+            existing.boostLabel = sr.boostLabel || existing.boostLabel;
+          } else if (sr.boost === 'none') {
+            existing.boost = 'none';
+            existing.boostLabel = '';
+          }
+          existing.finishedAt = sr.isFinished ? existing.finishedAt || now : null;
+        }
+      }
+
+      // Xóa các tay đua / bot cũ không còn trong danh sách của Master
+      Array.from(map.keys()).forEach((k) => {
+        if (!incomingIds.has(k)) {
+          map.delete(k);
+        }
+      });
+
+      if (phaseRef.current === 'podium') {
+        const sorted = Array.from(map.values()).sort((a, b) => a.rank - b.rank);
+        setPodiumTop3(sorted.slice(0, 3));
+      }
+    }
+  }, []);
 
   const startNewLobby = useCallback(
     (incrementMatch: boolean) => {
@@ -462,19 +684,24 @@ export function useRaceEngine() {
       setMinimapDots([]);
       setLeaderProgress(0);
       if (incrementMatch) {
-        setMatchNo((m) => m + 1);
+        matchNoRef.current += 1;
+        setMatchNo(matchNoRef.current);
       }
 
-      // Tự động đưa các khán giả VIP đã tặng quà ở ván trước vào vạch xuất phát cùng Thú Cưng VIP!
+      // Tự động đưa các khán giả đã báo danh / tặng quà trong lúc Podium vào vạch xuất phát!
       if (nextRoundVipQueueRef.current.length > 0) {
         const queued = nextRoundVipQueueRef.current.splice(0);
         queued.forEach((v) => {
           const { racer } = ensureRacer(v.userId, v.username, v.nickname, v.avatar);
-          const randPet = Math.floor(Math.random() * NOTBLOX_PET_NAMES.length);
-          racer.petIdx = randPet;
-          racer.petName = NOTBLOX_PET_NAMES[randPet];
-          racer.petSpeedBonus = v.coins >= 100 ? 0.25 : 0.18;
-          racer.coinsSpent += v.coins;
+          if (v.coins > 0) {
+            if (racer.petIdx === null) {
+              const randPet = Math.floor(Math.random() * NOTBLOX_PET_NAMES.length);
+              racer.petIdx = randPet;
+              racer.petName = NOTBLOX_PET_NAMES[randPet];
+            }
+            racer.petSpeedBonus = Math.max(racer.petSpeedBonus, v.coins >= 100 ? 0.25 : 0.18);
+            racer.coinsSpent += v.coins;
+          }
         });
       }
 
@@ -485,8 +712,9 @@ export function useRaceEngine() {
       speakCommentator(
         `Ván đua ${totalLapsRef.current} vòng chuẩn bị bắt đầu! Cả nhà bình luận bất kỳ để xuất hiện nhân vật ngay nào!`,
       );
+      pushRaceSync(true);
     },
-    [ensureRacer, pushFeed],
+    [ensureRacer, pushFeed, pushRaceSync],
   );
 
   const startRacingPhase = useCallback(() => {
@@ -509,7 +737,8 @@ export function useRaceEngine() {
     speakCommentator(
       `Xuất phát! Đường đua uốn lượn ${totalLapsRef.current} vòng chính thức bắt đầu! Thả tim và tặng quà để bật tên lửa vượt cua ngay nào!`,
     );
-  }, [fillBotsIfNeeded, pushFeed]);
+    pushRaceSync(true);
+  }, [fillBotsIfNeeded, pushFeed, pushRaceSync]);
 
   const enterPodiumPhase = useCallback(() => {
     phaseRef.current = 'podium';
@@ -555,9 +784,32 @@ export function useRaceEngine() {
         true,
       );
     }
-  }, [pushFeed, syncRacerProfilesToServer]);
+    pushRaceSync(true);
+  }, [pushFeed, pushRaceSync, syncRacerProfilesToServer]);
 
   // ---------- Xử lý sự kiện TikTok LIVE & Facebook Live ----------
+  const queueForNextRound = useCallback(
+    (payload: {
+      userId: string;
+      username: string;
+      nickname: string;
+      avatar: string;
+      coins: number;
+    }) => {
+      const already = nextRoundVipQueueRef.current.find((q) => q.userId === payload.userId);
+      if (already) {
+        already.coins += payload.coins;
+      } else {
+        nextRoundVipQueueRef.current.push({ ...payload });
+        pushFeed(
+          `✅ ${payload.nickname} đã báo danh — Tự động xuất phát ngay khi mở ván mới!`,
+          'join',
+        );
+      }
+    },
+    [pushFeed],
+  );
+
   const handleChat = useCallback(
     (payload: {
       userId: string;
@@ -567,7 +819,16 @@ export function useRaceEngine() {
       comment: string;
       platform?: 'tiktok' | 'facebook';
     }) => {
-      if (phaseRef.current === 'podium') return;
+      if (phaseRef.current === 'podium') {
+        queueForNextRound({
+          userId: payload.userId,
+          username: payload.username,
+          nickname: payload.nickname,
+          avatar: payload.avatar,
+          coins: 0,
+        });
+        return;
+      }
       const { racer, created } = ensureRacer(
         payload.userId,
         payload.username,
@@ -576,15 +837,19 @@ export function useRaceEngine() {
         false,
         payload.platform || 'tiktok',
       );
-      if (created) return;
+      if (created) {
+        pushRaceSync(true);
+        return;
+      }
 
       const now = performance.now();
       if (now - racer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
         racer.lastChatBoostAt = now;
         applyBoost(racer, 'chat', 1800, '💬 +TỐC');
+        pushRaceSync(true);
       }
     },
-    [applyBoost, ensureRacer],
+    [applyBoost, ensureRacer, pushRaceSync, queueForNextRound],
   );
 
   const handleLike = useCallback(
@@ -596,8 +861,17 @@ export function useRaceEngine() {
       likeCount: number;
       platform?: 'tiktok' | 'facebook';
     }) => {
-      if (phaseRef.current === 'podium') return;
-      const { racer } = ensureRacer(
+      if (phaseRef.current === 'podium') {
+        queueForNextRound({
+          userId: payload.userId,
+          username: payload.username,
+          nickname: payload.nickname,
+          avatar: payload.avatar,
+          coins: 0,
+        });
+        return;
+      }
+      const { racer, created } = ensureRacer(
         payload.userId,
         payload.username,
         payload.nickname,
@@ -612,9 +886,12 @@ export function useRaceEngine() {
         applyBoost(racer, 'sprint', 2200, '⚡ SPRINT');
         playSprintSfx();
         pushFeed(`⚡ ${racer.nickname} thả tim kích hoạt SPRINT!`, 'sprint');
+        pushRaceSync(true);
+      } else if (created) {
+        pushRaceSync(true);
       }
     },
-    [applyBoost, ensureRacer, pushFeed],
+    [applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
   );
 
   const handleGift = useCallback(
@@ -627,32 +904,19 @@ export function useRaceEngine() {
       coins: number;
       platform?: 'tiktok' | 'facebook';
     }) => {
-      if (phaseRef.current === 'podium') return;
       const coins = Math.max(1, Number(payload.coins || 1));
-
-      // Mục 4: Nếu người tặng quà chưa tham gia cuộc đua khi trận đang chạy -> KHÔNG tự tạo giữa đường đua,
-      // thông báo họ sẽ tự động xuất phát VIP ở lượt tiếp theo!
-      const isMidRace = phaseRef.current === 'racing' || phaseRef.current === 'countdown';
-      if (isMidRace && !racersRef.current.has(payload.userId)) {
-        const alreadyQueued = nextRoundVipQueueRef.current.find((q) => q.userId === payload.userId);
-        if (alreadyQueued) {
-          alreadyQueued.coins += coins;
-        } else {
-          nextRoundVipQueueRef.current.push({
-            userId: payload.userId,
-            username: payload.username,
-            nickname: payload.nickname,
-            avatar: payload.avatar,
-            coins,
-          });
-        }
-        pushFeed(
-          `🎁 ${payload.nickname} tặng ${payload.giftName || 'Quà'} (${coins} xu) — Sẽ xuất phát VIP ván sau!`,
-          'jetpack',
-        );
+      if (phaseRef.current === 'podium') {
+        queueForNextRound({
+          userId: payload.userId,
+          username: payload.username,
+          nickname: payload.nickname,
+          avatar: payload.avatar,
+          coins,
+        });
         return;
       }
 
+      // Cho phép người tặng quà join thẳng vào đường đua ngay lập tức (kể cả giữa trận) kèm Thú Cưng VIP + Tăng Tốc!
       const { racer } = ensureRacer(
         payload.userId,
         payload.username,
@@ -741,8 +1005,9 @@ export function useRaceEngine() {
         });
         pushFeed(`🎒 ${racer.nickname} bật Jetpack bay lướt (${coins} xu)!`, 'jetpack');
       }
+      pushRaceSync(true);
     },
-    [applyBoost, ensureRacer, pushFeed, showVipBanner, syncRacerProfilesToServer],
+    [applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound, showVipBanner, syncRacerProfilesToServer],
   );
 
   const requestMap = useCallback((id: string) => {
@@ -770,93 +1035,159 @@ export function useRaceEngine() {
         }
       })
       .catch(() => {});
-  }, [applySavedUsersList]);
+    // Đồng bộ ngay trạng thái cuộc đua hiện tại từ Server khi mở trang Stage (/?view=stage)
+    void fetch('/api/race/sync')
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.success && j.data) {
+          applyRaceSync(j.data);
+        }
+      })
+      .catch(() => {});
+  }, [applyRaceSync, applySavedUsersList]);
 
-  // ---------- WebSocket kết nối Backend ----------
+  // ---------- Kết nối Backend qua cả SSE (/api/tiktok/events giống npc-action-live) + WebSocket (/ws) ----------
   useEffect(() => {
     let ws: WebSocket | null = null;
-    let reconnectTimer = 0;
+    let sse: EventSource | null = null;
+    let wsReconnectTimer = 0;
+    let sseReconnectTimer = 0;
     let alive = true;
+    const seenEventIds = new Set<number>();
 
-    const connectWs = () => {
-      if (!alive) return;
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'status' && msg.data) {
-            setLiveStatus(msg.data);
-          } else if (msg.type === 'users' && Array.isArray(msg.data)) {
-            applySavedUsersList(msg.data);
-          } else if (msg.type === 'control' && msg.data) {
-            const { action, value } = msg.data;
-            if (action === 'skipPhase') {
-              if (phaseRef.current === 'lobby') startRacingPhase();
-              else if (phaseRef.current === 'racing' || phaseRef.current === 'countdown') enterPodiumPhase();
-              else startNewLobby(true);
-            } else if (action === 'resetMatch') {
-              startNewLobby(false);
-            } else if (action === 'setMap' && typeof value === 'string') {
-              requestMap(value);
-            } else if (action === 'setLaps' && typeof value === 'number') {
-              setTotalLaps(value);
-            } else if (action === 'setDuration' && typeof value === 'number') {
-              setRaceDuration(value);
-            } else if (action === 'setAutoBots' && typeof value === 'boolean') {
-              setAutoBots(value);
-            } else if (action === 'setDroneCam' && typeof value === 'boolean') {
-              setDroneCamOnState(value);
-            } else if (action === 'setAudio' && value && IS_STAGE) {
-              setAudioSettings(value);
-            }
-          } else if (
-            (msg.type === 'chat' || msg.type === 'member' || msg.type === 'follow' || msg.type === 'share') &&
-            msg.data
-          ) {
-            const d = msg.data;
-            handleChat({
-              userId: String(d.userId || d.username || d.nickname || 'viewer'),
-              username: String(d.username || d.userId || 'viewer'),
-              nickname: String(d.nickname || d.username || 'Tay đua'),
-              avatar: String(d.avatar || ''),
-              comment: String(d.comment || msg.type),
-              platform: d.platform === 'facebook' ? 'facebook' : 'tiktok',
-            });
-          } else if (msg.type === 'like' && msg.data) {
-            const d = msg.data;
-            handleLike({
-              userId: String(d.userId || d.username || d.nickname || 'viewer'),
-              username: String(d.username || d.userId || 'viewer'),
-              nickname: String(d.nickname || d.username || 'Tay đua'),
-              avatar: String(d.avatar || ''),
-              likeCount: Number(d.likeCount || 1),
-              platform: d.platform === 'facebook' ? 'facebook' : 'tiktok',
-            });
-          } else if (msg.type === 'gift' && msg.data) {
-            const d = msg.data;
-            handleGift({
-              userId: String(d.userId || d.username || d.nickname || 'viewer'),
-              username: String(d.username || d.userId || 'viewer'),
-              nickname: String(d.nickname || d.username || 'Tay đua'),
-              avatar: String(d.avatar || ''),
-              giftName: String(d.giftName || 'Quà tặng'),
-              coins: Number(d.coins ?? d.totalCoins ?? d.diamondCount ?? 1),
-              platform: d.platform === 'facebook' ? 'facebook' : 'tiktok',
-            });
-          }
-        } catch {}
-      };
-      ws.onclose = () => {
-        if (!alive) return;
-        reconnectTimer = window.setTimeout(connectWs, 2000);
-      };
+    const dispatchIncoming = (type: string, data: any) => {
+      if (!data) return;
+      if (type === 'raceSync') {
+        applyRaceSync(data);
+        return;
+      }
+      if (typeof data._eid === 'number') {
+        if (seenEventIds.has(data._eid)) return;
+        seenEventIds.add(data._eid);
+        if (seenEventIds.size > 2000) {
+          const first = seenEventIds.values().next().value;
+          if (first !== undefined) seenEventIds.delete(first);
+        }
+      }
+
+      if (type === 'status') {
+        setLiveStatus(data);
+      } else if (type === 'users' && Array.isArray(data)) {
+        applySavedUsersList(data);
+      } else if (type === 'control') {
+        const { action, value } = data;
+        if (action === 'skipPhase') {
+          if (phaseRef.current === 'lobby') startRacingPhase();
+          else if (phaseRef.current === 'racing' || phaseRef.current === 'countdown') enterPodiumPhase();
+          else startNewLobby(true);
+        } else if (action === 'resetMatch') {
+          startNewLobby(false);
+        } else if (action === 'setMap' && typeof value === 'string') {
+          requestMap(value);
+        } else if (action === 'setLaps' && typeof value === 'number') {
+          setTotalLaps(value);
+        } else if (action === 'setDuration' && typeof value === 'number') {
+          setRaceDuration(value);
+        } else if (action === 'setAutoBots' && typeof value === 'boolean') {
+          setAutoBots(value);
+        } else if (action === 'setDroneCam' && typeof value === 'boolean') {
+          setDroneCamOnState(value);
+        } else if (action === 'setAudio' && value && IS_STAGE) {
+          setAudioSettings(value);
+        }
+      } else if (type === 'chat' || type === 'member' || type === 'follow' || type === 'share') {
+        handleChat({
+          userId: String(data.userId || data.username || data.nickname || 'viewer'),
+          username: String(data.username || data.userId || 'viewer'),
+          nickname: String(data.nickname || data.username || 'Tay đua'),
+          avatar: String(data.avatar || ''),
+          comment: String(data.comment || type),
+          platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+        });
+      } else if (type === 'like') {
+        handleLike({
+          userId: String(data.userId || data.username || data.nickname || 'viewer'),
+          username: String(data.username || data.userId || 'viewer'),
+          nickname: String(data.nickname || data.username || 'Tay đua'),
+          avatar: String(data.avatar || ''),
+          likeCount: Number(data.likeCount || 1),
+          platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+        });
+      } else if (type === 'gift') {
+        handleGift({
+          userId: String(data.userId || data.username || data.nickname || 'viewer'),
+          username: String(data.username || data.userId || 'viewer'),
+          nickname: String(data.nickname || data.username || 'Tay đua'),
+          avatar: String(data.avatar || ''),
+          giftName: String(data.giftName || 'Quà tặng'),
+          coins: Number(data.coins ?? data.totalCoins ?? data.diamondCount ?? 1),
+          platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+        });
+      }
     };
 
+    // 1) Kênh SSE (/api/tiktok/events) — hoạt động 100% qua Nginx Proxy Manager / Cloudflare như npc-action-live
+    const connectSse = () => {
+      if (!alive) return;
+      try {
+        sse = new EventSource('/api/tiktok/events');
+        const eventTypes = [
+          'status',
+          'users',
+          'raceSync',
+          'control',
+          'chat',
+          'member',
+          'follow',
+          'share',
+          'like',
+          'gift',
+        ];
+        for (const t of eventTypes) {
+          sse.addEventListener(t, (ev) => {
+            try {
+              const parsed = JSON.parse((ev as MessageEvent).data);
+              dispatchIncoming(t, parsed);
+            } catch {}
+          });
+        }
+        sse.onerror = () => {
+          sse?.close();
+          if (!alive) return;
+          sseReconnectTimer = window.setTimeout(connectSse, 3000);
+        };
+      } catch {}
+    };
+
+    // 2) Kênh WebSocket (/ws) song song
+    const connectWs = () => {
+      if (!alive) return;
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+        wsRef.current = ws;
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg?.type && msg?.data !== undefined) {
+              dispatchIncoming(msg.type, msg.data);
+            }
+          } catch {}
+        };
+        ws.onclose = () => {
+          if (!alive) return;
+          wsReconnectTimer = window.setTimeout(connectWs, 3000);
+        };
+      } catch {}
+    };
+
+    connectSse();
     connectWs();
     return () => {
       alive = false;
-      clearTimeout(reconnectTimer);
+      clearTimeout(wsReconnectTimer);
+      clearTimeout(sseReconnectTimer);
+      sse?.close();
       ws?.close();
     };
   }, [
@@ -923,7 +1254,11 @@ export function useRaceEngine() {
           r.boostLabel = '';
         }
 
-        if (r.isBot && isMoving && r.boost === 'none' && Math.random() < 0.0025) {
+        // Tính toán tất định (Deterministic) cho Bot Sprint & Lạng lách để Màn Hình Xem Trước (/) và Màn Hình Live (/?view=stage) khớp nhau 100%!
+        const zSector = Math.floor(Math.max(0, r.z) / 28);
+        const detHash = hashCode(`${matchNoRef.current}_${r.id}_${zSector}`);
+
+        if (r.isBot && isMoving && r.boost === 'none' && detHash % 23 === 0) {
           r.boost = 'sprint';
           r.boostUntil = now + 1500;
           r.boostLabel = '⚡';
@@ -943,11 +1278,10 @@ export function useRaceEngine() {
               Math.floor(Math.max(0, r.z) / RACE_CONSTANTS.LAP_LENGTH) + 1,
             );
 
-            // Lạng lách mượt mà ôm cua trên đường đua uốn lượn
-            if (Math.random() < 0.015) {
-              r.targetX = Math.max(-halfW, Math.min(halfW, r.x + (Math.random() - 0.5) * 4.5));
-            }
-            r.x += (r.targetX - r.x) * Math.min(1, clampedDt * 2.5);
+            // Lạng lách mượt mà tất định theo cung đường
+            const desiredLane = (((detHash >> 4) % 100) / 100) * (halfW * 2) - halfW;
+            r.targetX = Math.max(-halfW, Math.min(halfW, desiredLane));
+            r.x += (r.targetX - r.x) * Math.min(1, clampedDt * 1.8);
 
             // Hoàn thành đủ số vòng (quay lại đúng điểm xuất phát/về đích!)
             if (r.z >= totalRaceDist) {
@@ -1026,6 +1360,15 @@ export function useRaceEngine() {
         speakCommentator('Vòng đua cuối cùng rồi! Ai sẽ bứt tốc vượt cua để cán đích đầu tiên đây!');
       }
 
+      // Đồng bộ trạng thái cuộc đua từ Bảng Điều Khiển (/) sang Màn Hình Live (/?view=stage) mỗi 0.4s
+      if (!IS_STAGE) {
+        syncAccumRef.current += clampedDt;
+        if (syncAccumRef.current >= 0.4) {
+          syncAccumRef.current = 0;
+          pushRaceSync(false);
+        }
+      }
+
       // Đồng bộ React HUD 6 lần/giây
       hudSyncAccumRef.current += clampedDt;
       if (hudSyncAccumRef.current >= 0.16) {
@@ -1069,14 +1412,20 @@ export function useRaceEngine() {
         body: JSON.stringify({ username }),
       });
       const text = await res.text();
-      return text ? JSON.parse(text) : { success: false, error: 'Không có phản hồi' };
+      const parsed = text ? JSON.parse(text) : { success: false, error: 'Không có phản hồi' };
+      if (parsed?.data) setLiveStatus(parsed.data);
+      return parsed;
     } catch (e: any) {
       return { success: false, error: e?.message || String(e) };
     }
   }, []);
 
   const disconnectTikTok = useCallback(async () => {
-    await fetch('/api/tiktok/disconnect', { method: 'POST' }).catch(() => {});
+    try {
+      const res = await fetch('/api/tiktok/disconnect', { method: 'POST' });
+      const j = await res.json();
+      if (j?.data) setLiveStatus(j.data);
+    } catch {}
   }, []);
 
   const connectFacebook = useCallback(
@@ -1088,7 +1437,9 @@ export function useRaceEngine() {
           body: JSON.stringify(opts),
         });
         const text = await res.text();
-        return text ? JSON.parse(text) : { success: false, error: 'Không có phản hồi' };
+        const parsed = text ? JSON.parse(text) : { success: false, error: 'Không có phản hồi' };
+        if (parsed?.data) setLiveStatus(parsed.data);
+        return parsed;
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
       }
@@ -1097,7 +1448,11 @@ export function useRaceEngine() {
   );
 
   const disconnectFacebook = useCallback(async () => {
-    await fetch('/api/facebook/disconnect', { method: 'POST' }).catch(() => {});
+    try {
+      const res = await fetch('/api/facebook/disconnect', { method: 'POST' });
+      const j = await res.json();
+      if (j?.data) setLiveStatus(j.data);
+    } catch {}
   }, []);
 
   const ingestFbEvent = useCallback(
