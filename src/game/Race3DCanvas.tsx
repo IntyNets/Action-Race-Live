@@ -83,7 +83,8 @@ const BOOST_BADGE_STYLE: Record<RacerState['boost'], string> = {
     'bg-gradient-to-r from-yellow-300 via-amber-400 to-orange-500 text-slate-950 shadow-[0_0_16px_rgba(251,191,36,0.95)]',
 };
 
-type NotBloxAnimState = 'Idle' | 'Walk' | 'Run' | 'Jump' | 'Fall';
+// Đồng bộ tên gọi 6 trạng thái hoạt ảnh chuẩn cho cả Character.glb và MiniCharacter.glb
+type NotBloxAnimState = 'idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall';
 
 export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   racersRef,
@@ -1161,15 +1162,46 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           return urlPromiseCache.get(url)!;
         };
 
+        // Chuẩn hóa dấu Quaternion (dot(q_i, q_{i+1}) < 0 -> đảo dấu) trên mọi QuaternionKeyframeTrack
+        // để khắc phục triệt để lỗi chân trái của Character.glb bị triệt tiêu góc xoay (trông như đang đi bộ)
+        const sanitizeAnimationClips = (clips: any[]) => {
+          for (const clip of clips) {
+            if (!clip || !Array.isArray(clip.tracks)) continue;
+            for (const track of clip.tracks) {
+              const vals = track?.values;
+              if (!vals || vals.length < 8) continue;
+              const isQuat =
+                track.ValueTypeName === 'quaternion' ||
+                (typeof track.name === 'string' && track.name.endsWith('.quaternion'));
+              if (!isQuat) continue;
+              for (let k = 4; k < vals.length; k += 4) {
+                const dot =
+                  vals[k - 4] * vals[k] +
+                  vals[k - 3] * vals[k + 1] +
+                  vals[k - 2] * vals[k + 2] +
+                  vals[k - 1] * vals[k + 3];
+                if (dot < 0) {
+                  vals[k] = -vals[k];
+                  vals[k + 1] = -vals[k + 1];
+                  vals[k + 2] = -vals[k + 2];
+                  vals[k + 3] = -vals[k + 3];
+                }
+              }
+            }
+          }
+        };
+
         // 4A) Tải Nhân vật người chơi NotBlox
         NOTBLOX_CHARACTER_MODELS.forEach((spec, idx) => {
           void loadGlbOnce(spec.url).then((gltf) => {
             if (cancelled || !gltf) return;
             const clonedRoot = SkeletonUtils.clone(gltf.scene);
             normalizeNotBloxMesh(clonedRoot, spec.targetHeight);
+            const animations = gltf.animations || [];
+            sanitizeAnimationClips(animations);
             glbTemplates[idx] = {
               scene: clonedRoot,
-              animations: gltf.animations || [],
+              animations,
             };
             setLoadedModelsCount((c) => c + 1);
           });
@@ -1762,10 +1794,35 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             slot.glbCharIdx = chosenIdx;
             if (tpl.animations && tpl.animations.length > 0) {
               const mixer = new THREE.AnimationMixer(cloned);
+              const rawActions = new Map<string, any>();
               tpl.animations.forEach((clip: any) => {
                 const action = mixer.clipAction(clip);
-                slot.glbActions.set(clip.name.toLowerCase(), action);
+                const key = clip.name.toLowerCase();
+                rawActions.set(key, action);
+                slot.glbActions.set(key, action);
               });
+
+              // Đồng bộ tên gọi 6 trạng thái chuẩn ('idle', 'run', 'sprint', 'jump', 'dance', 'fall')
+              // cho cả Character.glb (idle, run, fall, dance) và MiniCharacter.glb (idle, sprint, jump, fall, emote-yes)
+              // TUYỆT ĐỐI KHÔNG bao giờ gán 'walk' vào 'run' hoặc 'sprint' để nhân vật luôn chạy nước rút sung sức!
+              const syncStateMap: Record<NotBloxAnimState, string[]> = {
+                idle: ['idle', 'static'],
+                run: ['run', 'sprint'],
+                sprint: ['sprint', 'run'],
+                jump: ['jump', 'fall'],
+                dance: ['dance', 'emote-yes', 'jump'],
+                fall: ['fall', 'jump'],
+              };
+              (Object.keys(syncStateMap) as NotBloxAnimState[]).forEach((stateName) => {
+                for (const candidate of syncStateMap[stateName]) {
+                  const act = rawActions.get(candidate);
+                  if (act) {
+                    slot.glbActions.set(stateName, act);
+                    break;
+                  }
+                }
+              });
+
               slot.glbMixer = mixer;
               slot.glbHasClips = true;
             } else {
@@ -1801,12 +1858,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           slot.petHolder.visible = true;
         };
 
+        // Ánh xạ đồng bộ 6 trạng thái hoạt ảnh chuẩn cho cả Character và MiniCharacter
         const ANIM_CANDIDATES: Record<NotBloxAnimState, string[]> = {
-          Run: ['run', 'sprint', 'walk'],
-          Walk: ['walk', 'run', 'sprint'],
-          Idle: ['idle', 'static'],
-          Jump: ['jump', 'dance', 'fall', 'sprint', 'run'],
-          Fall: ['fall', 'jump', 'idle'],
+          idle: ['idle', 'static'],
+          run: ['run', 'sprint'],
+          sprint: ['sprint', 'run'],
+          jump: ['jump', 'fall', 'sprint', 'run'],
+          dance: ['dance', 'emote-yes', 'jump'],
+          fall: ['fall', 'jump', 'idle'],
         };
 
         // Chuyển đổi AnimationState theo đúng AnimationSystem.ts của iErcann/NotBlox (fadeOut 0.2s / fadeIn 0.1s)
@@ -1820,47 +1879,62 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         ) => {
           if (slot.glbHasClips && slot.glbMixer) {
             if (slot.glbAnimState !== requestedState) {
+              const prevMatched = slot.glbAnimState ? slot.glbActions.get(slot.glbAnimState) : undefined;
               slot.glbAnimState = requestedState;
-              const candidates = ANIM_CANDIDATES[requestedState] || [requestedState.toLowerCase()];
-              let matched: any = undefined;
-              // 1) Ưu tiên khớp chính xác tên clip (vd: 'run' cho Character.glb, 'sprint' cho MiniCharacter.glb)
-              for (const cand of candidates) {
-                matched = slot.glbActions.get(cand);
-                if (matched) break;
-              }
-              // 2) Dự phòng khớp chuỗi con theo đúng thứ tự ưu tiên
+              const candidates = ANIM_CANDIDATES[requestedState] || [requestedState];
+              let matched: any = slot.glbActions.get(requestedState);
               if (!matched) {
                 for (const cand of candidates) {
-                  for (const [k, act] of slot.glbActions.entries()) {
-                    if (k.includes(cand)) {
-                      matched = act;
-                      break;
-                    }
-                  }
+                  matched = slot.glbActions.get(cand);
                   if (matched) break;
                 }
               }
               if (!matched) {
                 matched = slot.glbActions.values().next().value;
               }
-              slot.glbActions.forEach((act) => {
-                if (act !== matched) act.fadeOut(0.2);
-              });
-              if (matched) {
+              // Nếu chuyển giữa 'run' và 'sprint' trên cùng 1 AnimationAction thì giữ nguyên chu kỳ sải chân, chỉ tăng timeScale!
+              if (matched && matched !== prevMatched) {
+                const uniqueActions = new Set<any>(slot.glbActions.values());
+                uniqueActions.forEach((act) => {
+                  if (act !== matched) act.fadeOut(0.18);
+                });
                 matched.reset().fadeIn(0.1).play();
               }
             }
-            // Điều chỉnh tốc độ AnimationMixer tỷ lệ thuận với tốc độ chạy
-            slot.glbMixer.timeScale =
-              requestedState === 'Run' ? Math.max(0.85, Math.min(2.4, speed / 21)) : 1.0;
+            // Tăng tốc độ nhịp sải chân (timeScale) cho Character.glb (idx=0) và MiniCharacter.glb (idx=1)
+            // để nhân vật chạy guồng chân cực nhanh & dứt khoát, không bao giờ trông như đang đi bộ
+            const isFullChar = slot.glbCharIdx === 0;
+            if (requestedState === 'sprint') {
+              slot.glbMixer.timeScale = isFullChar
+                ? Math.max(1.85, Math.min(2.65, speed / 12.2))
+                : Math.max(1.65, Math.min(2.45, speed / 13.5));
+            } else if (requestedState === 'run') {
+              slot.glbMixer.timeScale = isFullChar
+                ? Math.max(1.45, Math.min(2.15, speed / 13.2))
+                : Math.max(1.3, Math.min(1.95, speed / 14.5));
+            } else if (requestedState === 'dance') {
+              slot.glbMixer.timeScale = 1.2;
+            } else {
+              slot.glbMixer.timeScale = 1.0;
+            }
             slot.glbMixer.update(dt);
+
+            // Tạo độ nhún chạy bộ (running bounce) sinh động theo sải chân khi ở trạng thái 'run' hoặc 'sprint'
+            if (requestedState === 'run' || requestedState === 'sprint') {
+              const strideFreq = requestedState === 'sprint' ? 16.5 : 13.0;
+              const strideAmp = requestedState === 'sprint' ? 0.14 : 0.1;
+              slot.glbHolder.position.y =
+                Math.abs(Math.sin(tSec * strideFreq + seed * 1.3)) * strideAmp;
+            } else {
+              slot.glbHolder.position.y = 0;
+            }
           } else {
-            // Dự phòng cho model thú cưng không có clip xương: nhún nhảy phi nước đại sinh động
-            if (requestedState === 'Run') {
+            // Dự phòng cho model không có clip xương
+            if (requestedState === 'run' || requestedState === 'sprint') {
               const hop = Math.abs(Math.sin(tSec * Math.min(18, speed * 0.55) + seed)) * 0.35;
               slot.glbHolder.position.y = hop;
               slot.glbHolder.rotation.x = Math.sin(tSec * 12 + seed) * 0.12;
-            } else if (requestedState === 'Jump') {
+            } else if (requestedState === 'jump' || requestedState === 'dance') {
               slot.glbHolder.position.y = Math.abs(Math.sin(tSec * 7 + seed)) * 0.45;
               slot.glbHolder.rotation.x = 0;
             } else {
@@ -1968,7 +2042,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.bodyPivot.position.set(0, jump, 0);
               slot.bodyPivot.rotation.set(0, 0, 0);
               if (slot.glbHolder.visible) {
-                updateNotBloxAnimation(slot, 'Jump', dt, 0, tSec, i);
+                updateNotBloxAnimation(slot, 'dance', dt, 0, tSec, i);
               } else {
                 slot.leftArm.rotation.x = -2.5 + Math.sin(tSec * 9) * 0.35;
                 slot.rightArm.rotation.x = -2.5 - Math.sin(tSec * 9) * 0.35;
@@ -2024,14 +2098,23 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.shadowMesh.scale.setScalar(0.85);
             } else {
               slot.bodyPivot.position.set(0, 0, 0);
-              slot.bodyPivot.rotation.set(r.speed > 1 ? 0.1 : 0, 0, bankAngle);
+              const forwardLean = isSprint ? 0.24 : r.speed > 1 ? 0.16 : 0;
+              slot.bodyPivot.rotation.set(forwardLean, 0, bankAngle);
               slot.shadowMesh.scale.setScalar(1.0);
             }
 
-            // Hoạt ảnh chuyển động chuẩn NotBlox AnimationMixer (Idle / Run / Jump)
+            // Hoạt ảnh chuyển động đồng bộ 6 trạng thái ('idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall')
             if (slot.glbHolder.visible) {
               const animState: NotBloxAnimState =
-                isRocket || isDragon || isJetpack ? 'Jump' : r.speed > 1 ? 'Run' : 'Idle';
+                isRocket || isDragon
+                  ? 'jump'
+                  : isJetpack
+                    ? 'fall'
+                    : isSprint && r.speed > 1
+                      ? 'sprint'
+                      : r.speed > 1
+                        ? 'run'
+                        : 'idle';
               updateNotBloxAnimation(slot, animState, dt, r.speed, tSec, i);
             } else if (isRocket || isDragon) {
               slot.leftLeg.rotation.x = -0.75;
@@ -2318,19 +2401,20 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const spotRacer =
             camHudNow.spotlightUserId ? racersRef.current.get(camHudNow.spotlightUserId) : undefined;
           const isSpotlightActive =
-            camHudNow.state === 'BOOST_SPOTLIGHT' ||
-            camHudNow.state === 'MAJOR_GIFT_SPOTLIGHT' ||
-            camHudNow.state === 'OVERTAKE_SPOTLIGHT';
+            Boolean(spotRacer) &&
+            (camHudNow.state === 'FRONT_TRACKING' ||
+              camHudNow.state === 'SIDE_TRACKING' ||
+              camHudNow.state === 'CHASE');
 
-          // Chiếu chùm sáng Spotlight 3D lên nhân vật đang nhận quà / vượt Top 1
+          // Chiếu chùm sáng Spotlight 3D lên nhân vật đang nhận quà / vượt Top 1 / mới join
           if (isSpotlightActive && spotRacer) {
             const ss = sampleCircuit(spotRacer.z, spotRacer.x);
             spotlightBeam.visible = true;
             spotlightBeam.position.set(ss.x, 7.0, ss.z);
             spotlightBeam.material.color.setHex(
-              camHudNow.state === 'MAJOR_GIFT_SPOTLIGHT'
+              spotRacer.boost === 'dragon'
                 ? 0xfacc15
-                : camHudNow.state === 'BOOST_SPOTLIGHT'
+                : spotRacer.boost === 'rocket'
                   ? 0xf43f5e
                   : 0x38bdf8,
             );
@@ -2345,8 +2429,15 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               (phase === 'racing' || phase === 'countdown') &&
               (focusBoost === 'dragon' ||
                 focusBoost === 'rocket' ||
-                camHudNow.state === 'MAJOR_GIFT_SPOTLIGHT');
-            speedLinesRef.current.style.opacity = showLines ? '0.6' : '0';
+                focusBoost === 'jetpack' ||
+                focusBoost === 'sprint' ||
+                focusBoost === 'join');
+            speedLinesRef.current.style.opacity =
+              focusBoost === 'dragon' || focusBoost === 'rocket'
+                ? '0.65'
+                : showLines
+                  ? '0.32'
+                  : '0';
           }
 
           if (Math.abs(camera.fov - camPose.fov) > 0.03) {

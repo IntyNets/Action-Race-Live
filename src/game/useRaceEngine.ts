@@ -11,7 +11,7 @@ import {
 } from './raceTypes';
 import { getActiveMapId, sampleCircuit, setActiveMap, worldToMinimap } from './trackCurve';
 import { resolveAvatarColor } from './avatarColor';
-import { CameraDirector, CameraHudState } from './camera/CameraDirector';
+import { CameraDirector, CameraHudState, CameraModeOverride } from './camera/CameraDirector';
 import {
   playCountdownBeep,
   playCrowdCheerSfx,
@@ -165,6 +165,8 @@ export function useRaceEngine() {
   const [feed, setFeed] = useState<ActivityFeedItem[]>([]);
   const [autoBots, setAutoBotsState] = useState<boolean>(true);
   const [droneCamOn, setDroneCamOnState] = useState<boolean>(true);
+  const cameraModeRef = useRef<CameraModeOverride>('auto');
+  const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
   const savedUsersRef = useRef<Map<string, UserProfile>>(new Map());
   const [savedUsers, setSavedUsers] = useState<UserProfile[]>([]);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({
@@ -403,6 +405,14 @@ export function useRaceEngine() {
       setRacerCount(map.size);
       if (!isBot) {
         syncRacerProfilesToServer([racer]);
+        // Sự kiện PLAYER_JOIN: camera ưu tiên giới thiệu nhân vật mới vừa tham gia vào cuộc đua
+        cameraDirectorRef.current.pushEvent({
+          type: 'PLAYER_JOIN',
+          userId: racer.id,
+          nickname: racer.nickname,
+          label: `👋 Lv.${racer.level} VÀO ĐUA!`,
+          durationSec: 2.2,
+        });
         const nowMs = Date.now();
         if (saved) {
           playJoinSfx();
@@ -517,6 +527,7 @@ export function useRaceEngine() {
       raceDuration: raceDurationRef.current,
       autoBots: autoBotsRef.current,
       droneCamOn: droneCamOnRef.current,
+      cameraMode: cameraModeRef.current,
       racers: racersList,
     };
 
@@ -564,6 +575,19 @@ export function useRaceEngine() {
     if (typeof snap.droneCamOn === 'boolean' && snap.droneCamOn !== droneCamOnRef.current) {
       droneCamOnRef.current = snap.droneCamOn;
       setDroneCamOnState(snap.droneCamOn);
+    }
+    if (
+      typeof snap.cameraMode === 'string' &&
+      (snap.cameraMode === 'auto' ||
+        snap.cameraMode === 'chase' ||
+        snap.cameraMode === 'front' ||
+        snap.cameraMode === 'side' ||
+        snap.cameraMode === 'overview') &&
+      snap.cameraMode !== cameraModeRef.current
+    ) {
+      cameraModeRef.current = snap.cameraMode;
+      setCameraModeState(snap.cameraMode);
+      cameraDirectorRef.current.setModeOverride(snap.cameraMode);
     }
     if (typeof snap.timer === 'number') {
       timerRef.current = snap.timer;
@@ -1158,7 +1182,20 @@ export function useRaceEngine() {
         } else if (action === 'setAutoBots' && typeof value === 'boolean') {
           setAutoBots(value);
         } else if (action === 'setDroneCam' && typeof value === 'boolean') {
+          droneCamOnRef.current = value;
           setDroneCamOnState(value);
+        } else if (
+          action === 'setCameraMode' &&
+          (value === 'auto' ||
+            value === 'chase' ||
+            value === 'front' ||
+            value === 'side' ||
+            value === 'overview')
+        ) {
+          cameraModeRef.current = value;
+          setCameraModeState(value);
+          cameraDirectorRef.current.setModeOverride(value);
+          setCameraHud(cameraDirectorRef.current.getHudState());
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -1428,11 +1465,12 @@ export function useRaceEngine() {
             const prevLeader = map.get(lastTop1IdRef.current);
             playCrowdCheerSfx();
             cameraDirectorRef.current.pushEvent({
-              type: 'OVERTAKE_EVENT',
+              type: 'PLAYER_OVERTAKE',
               userId: currTop1.id,
+              rivalUserId: prevLeader?.id,
               nickname: currTop1.nickname,
-              label: '⚡ VƯỢT LÊN TOP 1!',
-              durationSec: 2.3,
+              label: `⚡ VƯỢT QUA ${prevLeader?.nickname || 'TOP 1'}!`,
+              durationSec: 2.5,
             });
             const overtakeLines = [
               `Cú lật kèo nghẹt thở! ${currTop1.nickname} vừa lách qua khúc cua tuyệt đẹp, cướp ngôi Số 1 từ tay ${prevLeader?.nickname || 'đối thủ'}!`,
@@ -1740,10 +1778,23 @@ export function useRaceEngine() {
 
   const changeDroneCam = useCallback(
     (v: boolean) => {
+      droneCamOnRef.current = v;
       setDroneCamOnState(v);
       postControl('setDroneCam', v);
     },
     [postControl],
+  );
+
+  const changeCameraMode = useCallback(
+    (mode: CameraModeOverride) => {
+      cameraModeRef.current = mode;
+      setCameraModeState(mode);
+      cameraDirectorRef.current.setModeOverride(mode);
+      setCameraHud(cameraDirectorRef.current.getHudState());
+      postControl('setCameraMode', mode);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
   );
 
   const changeMap = useCallback(
@@ -1807,6 +1858,8 @@ export function useRaceEngine() {
     setAutoBots: changeAutoBots,
     droneCamOn,
     setDroneCamOn: changeDroneCam,
+    cameraMode,
+    setCameraMode: changeCameraMode,
     stepPhysics,
     connectTikTok,
     disconnectTikTok,

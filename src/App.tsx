@@ -62,6 +62,8 @@ export default function App() {
     changeMap,
     droneCamOn,
     setDroneCamOn,
+    cameraMode,
+    setCameraMode,
   } = engine;
 
   const [platformTab, setPlatformTab] = useState<'tiktok' | 'facebook'>(() => {
@@ -275,12 +277,12 @@ export default function App() {
             </span>
             <span
               className={`px-2 py-1 rounded-lg text-[10px] font-black border shadow ${
-                cameraHud.state === 'MAJOR_GIFT_SPOTLIGHT'
+                cameraHud.state === 'FRONT_TRACKING'
                   ? 'bg-amber-400 text-slate-950 border-yellow-100'
-                  : cameraHud.state === 'BOOST_SPOTLIGHT'
-                    ? 'bg-rose-500 text-white border-pink-200'
-                    : cameraHud.state === 'OVERTAKE_SPOTLIGHT'
-                      ? 'bg-cyan-400 text-slate-950 border-cyan-100'
+                  : cameraHud.state === 'SIDE_TRACKING'
+                    ? 'bg-cyan-400 text-slate-950 border-cyan-100'
+                    : cameraHud.state === 'OVERVIEW'
+                      ? 'bg-indigo-500 text-white border-indigo-200'
                       : 'bg-slate-950/80 text-sky-300 border-sky-400/30'
               }`}
             >
@@ -422,9 +424,9 @@ export default function App() {
         {/* Thanh Spotlight Truyền Hình khi chưa có VIP Banner đè lên */}
         {!vipBanner &&
           cameraHud.spotlightNickname &&
-          (cameraHud.state === 'BOOST_SPOTLIGHT' ||
-            cameraHud.state === 'MAJOR_GIFT_SPOTLIGHT' ||
-            cameraHud.state === 'OVERTAKE_SPOTLIGHT') && (
+          (cameraHud.state === 'FRONT_TRACKING' ||
+            cameraHud.state === 'SIDE_TRACKING' ||
+            cameraHud.state === 'CHASE') && (
             <div className="self-center px-3 py-1 rounded-full bg-slate-950/85 border border-amber-300/70 backdrop-blur-md shadow-lg flex items-center gap-2 text-[11px] font-black">
               <span className="text-amber-300">{cameraHud.badgeText}</span>
               <span className="text-white">{cameraHud.spotlightNickname}</span>
@@ -1176,6 +1178,72 @@ export default function App() {
                 >
                   <RotateCcw className="w-4 h-4" /> Reset ván mới
                 </button>
+              </div>
+
+              {/* Bộ chọn 4 Chế Độ Camera Đạo Diễn chuẩn Roblox Style Racing */}
+              <div className="flex flex-col gap-2 bg-slate-950/80 rounded-xl p-3 border border-amber-400/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-black text-amber-300">
+                    🎥 Chế Độ Camera 3D (Roblox Style Racing Spec):
+                  </span>
+                  <span className="text-[10.5px] font-bold text-sky-300">
+                    Đang quay: {cameraHud.badgeText}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[11px] font-black">
+                  {(
+                    [
+                      {
+                        id: 'auto',
+                        label: '🎬 Tự Động',
+                        desc: 'Đạo diễn AI (Chase + Front + Side)',
+                      },
+                      {
+                        id: 'chase',
+                        label: '🏃 Mode A: Chase',
+                        desc: 'Phía sau nhân vật (Mặc định)',
+                      },
+                      {
+                        id: 'front',
+                        label: '🤳 Mode B: Front',
+                        desc: 'Chính diện lùi theo nhân vật',
+                      },
+                      {
+                        id: 'side',
+                        label: '🏎️ Mode C: Side',
+                        desc: 'Song song ngang hông',
+                      },
+                      {
+                        id: 'overview',
+                        label: '🚁 Mode D: Overview',
+                        desc: 'Toàn cảnh từ trên cao',
+                      },
+                    ] as const
+                  ).map((m) => {
+                    const active = cameraMode === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setCameraMode(m.id)}
+                        className={`rounded-xl p-2 text-left border transition flex flex-col justify-between ${
+                          active
+                            ? 'bg-amber-400 text-slate-950 border-yellow-100 shadow-[0_0_16px_rgba(251,191,36,0.45)]'
+                            : 'bg-slate-900/90 text-slate-200 border-white/10 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div>{m.label}</div>
+                        <div
+                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${
+                            active ? 'text-slate-900' : 'text-slate-400'
+                          }`}
+                        >
+                          {m.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-sky-400/30 text-xs font-semibold cursor-pointer">
