@@ -1,5 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { DroneRect, GraphicsQuality, MatchPhase, RACE_CONSTANTS, RacerState } from './raceTypes';
+import {
+  DroneRect,
+  GraphicsQuality,
+  MatchPhase,
+  RACE_CONSTANTS,
+  RacerState,
+  SpectatorInfo,
+} from './raceTypes';
 import {
   CIRCUIT_TRACK,
   MapTheme,
@@ -11,6 +18,7 @@ import { CameraDirector } from './camera/CameraDirector';
 
 interface Race3DCanvasProps {
   racersRef: React.MutableRefObject<Map<string, RacerState>>;
+  spectatorsRef?: React.MutableRefObject<Map<string, SpectatorInfo>>;
   phaseRef: React.MutableRefObject<MatchPhase>;
   timerRef: React.MutableRefObject<number>;
   cameraDirectorRef: React.MutableRefObject<CameraDirector>;
@@ -94,6 +102,7 @@ type NotBloxAnimState = 'idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall';
 
 export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   racersRef,
+  spectatorsRef,
   phaseRef,
   timerRef,
   cameraDirectorRef,
@@ -263,10 +272,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         );
         scene.add(skyDome);
 
-        // Ánh sáng 3 điểm + Nguồn sáng Mặt Trời đổ bóng thật sắc nét theo nhân vật
-        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x166534, 0.92);
+        // Ánh sáng 3 điểm + Nguồn sáng Mặt Trời đổ bóng rõ nét cho nhân vật, cây cối, hoa cỏ & khán giả
+        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x166534, 0.78);
         scene.add(hemiLight);
-        const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.65);
+        const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.85);
         sunLight.position.set(36, 58, -28);
         sunLight.castShadow = graphicsQualityRef.current !== 'low';
         sunLight.shadow.mapSize.set(
@@ -497,11 +506,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const leafTopGeo = new THREE.IcosahedronGeometry(1.48, 1);
         const bushGeo = new THREE.DodecahedronGeometry(1.05, 1);
         const grassBladeGeo = new THREE.ConeGeometry(0.22, 0.95, 4);
+        const flowerGeo = new THREE.OctahedronGeometry(0.28, 0);
         const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b3a19, roughness: 0.92 });
         const leafMatA = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.82, flatShading: true });
         const leafMatB = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.78, flatShading: true });
         const leafMatC = new THREE.MeshStandardMaterial({ color: 0x4ade80, roughness: 0.75, flatShading: true });
         const grassBladeMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.85, flatShading: true });
+        const flowerMatPink = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.55 });
+        const flowerMatGold = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 });
         const standGeo = new THREE.BoxGeometry(6.5, 4.4, 18);
         const standRoofGeo = new THREE.BoxGeometry(7.6, 0.6, 18.6);
         const standMat = new THREE.MeshStandardMaterial({ color: 0x4f46e5, roughness: 0.55 });
@@ -729,6 +741,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           leafTopGeo,
           bushGeo,
           grassBladeGeo,
+          flowerGeo,
           standGeo,
           standRoofGeo,
           gatePillarGeo,
@@ -1047,13 +1060,39 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               grassInst.setMatrixAt(gi++, dummy.matrix);
             }
             grassInst.count = gi;
+            // Thêm hoa cỏ 3D nhiều màu sắc (hồng / vàng) ven 2 bên đường đua có đổ bóng rõ nét
+            const flowerCount = quality === 'high' ? 240 : 120;
+            const flowerInstPink = new THREE.InstancedMesh(flowerGeo, flowerMatPink, flowerCount);
+            const flowerInstGold = new THREE.InstancedMesh(flowerGeo, flowerMatGold, flowerCount);
+            let fp = 0;
+            let fg = 0;
+            for (let fl = 0; fl < flowerCount * 2; fl++) {
+              const dist = ((fl * 0.381966) % 1) * total;
+              const side = fl % 2 === 0 ? -1 : 1;
+              const lat = side * (halfW + 2.4 + ((fl * 5) % 12) * 0.85);
+              const s = sampleCircuit(dist, lat);
+              const sc = 0.75 + (fl % 4) * 0.2;
+              dummy.position.set(s.x, 0.34 * sc, s.z);
+              dummy.rotation.set(0.2, fl * 0.8, 0.15);
+              dummy.scale.setScalar(sc);
+              dummy.updateMatrix();
+              if (fl % 2 === 0 && fp < flowerCount) flowerInstPink.setMatrixAt(fp++, dummy.matrix);
+              else if (fg < flowerCount) flowerInstGold.setMatrixAt(fg++, dummy.matrix);
+            }
+            flowerInstPink.count = fp;
+            flowerInstGold.count = fg;
+
             if (enableWorldShadows) {
               bushInst.castShadow = true;
               bushInst.receiveShadow = true;
               grassInst.castShadow = true;
               grassInst.receiveShadow = true;
+              flowerInstPink.castShadow = true;
+              flowerInstPink.receiveShadow = true;
+              flowerInstGold.castShadow = true;
+              flowerInstGold.receiveShadow = true;
             }
-            trackRoot.add(bushInst, grassInst);
+            trackRoot.add(bushInst, grassInst, flowerInstPink, flowerInstGold);
           }
 
           // 2) Công trình & Cảnh vật ĐẶC TRƯNG cho từng bản đồ
@@ -1347,7 +1386,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         }
 
         let particleCursor = 0;
-        const spawnParticle = (opts: {
+        const spawnParticle = (_opts: {
           x: number;
           y: number;
           z: number;
@@ -1361,26 +1400,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           color: number;
           smoke?: boolean;
         }) => {
-          const p = particles[particleCursor];
-          particleCursor = (particleCursor + 1) % MAX_PARTICLES;
-          p.active = true;
-          p.x = opts.x;
-          p.y = opts.y;
-          p.z = opts.z;
-          p.vx = opts.vx;
-          p.vy = opts.vy;
-          p.vz = opts.vz;
-          p.life = opts.life;
-          p.maxLife = opts.life;
-          p.size = opts.size;
-          p.grow = opts.grow ?? 1.2;
-          p.gravity = opts.gravity ?? 0;
-          p.mat.color.setHex(opts.color);
-          p.mat.blending = opts.smoke ? THREE.NormalBlending : THREE.AdditiveBlending;
-          p.mat.opacity = opts.smoke ? 0.55 : 0.95;
-          p.sprite.position.set(p.x, p.y, p.z);
-          p.sprite.scale.setScalar(p.size);
-          p.sprite.visible = true;
+          // Không dùng hạt mịn/nhiễu rời rạc để giữ toàn bộ hiệu ứng 3D (tia sét, hào quang, vòng năng lượng, vệt đèn đường, lửa) siêu mượt mà & sắc nét!
         };
 
         // ---------- 3B. Vệt Đèn Đường Phát Sáng The Flash ("chạy tới đâu đường sáng tới đó") ----------
@@ -2141,6 +2161,64 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           pool.push(createRacerSlot());
         }
 
+        // ---------- 5B. Pool 24 Khán Giả Cổ Vũ Đứng Dọc 2 Bên Đường Đua (User mới vào chưa join) ----------
+        interface SpectatorSlot {
+          root: any;
+          bodyPivot: any;
+          leftArm: any;
+          rightArm: any;
+          torsoMat: any;
+          hatMat: any;
+          dist: number;
+          side: -1 | 1;
+        }
+        const spectatorPalette = [0x38bdf8, 0xf43f5e, 0x22c55e, 0xfacc15, 0xa855f7, 0xf97316, 0xec4899, 0x14b8a6];
+        const spectatorPool: SpectatorSlot[] = [];
+        for (let sp = 0; sp < 24; sp++) {
+          const root = new THREE.Group();
+          const bodyPivot = new THREE.Group();
+          root.add(bodyPivot);
+          const torsoMat = new THREE.MeshStandardMaterial({
+            color: spectatorPalette[sp % spectatorPalette.length],
+            roughness: 0.45,
+          });
+          const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.6 });
+          const skinMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.5 });
+          const hatMat = new THREE.MeshStandardMaterial({
+            color: spectatorPalette[(sp + 3) % spectatorPalette.length],
+            roughness: 0.4,
+          });
+          const faceMat = new THREE.MeshStandardMaterial({ map: sharedFaceTex, roughness: 0.45 });
+          const head = new THREE.Mesh(geoHead, [skinMat, skinMat, skinMat, skinMat, faceMat, skinMat]);
+          head.position.set(0, 2.38, 0);
+          const hat = new THREE.Mesh(geoHatTop, hatMat);
+          hat.position.set(0, 2.86, 0);
+          const torso = new THREE.Mesh(geoTorso, torsoMat);
+          torso.position.set(0, 1.44, 0);
+          const makeSpecLimb = (x: number, y: number, mat: any) => {
+            const p = new THREE.Group();
+            p.position.set(x, y, 0);
+            const m = new THREE.Mesh(geoLimb, mat);
+            m.position.y = -0.42;
+            p.add(m);
+            bodyPivot.add(p);
+            return p;
+          };
+          const leftArm = makeSpecLimb(-0.68, 1.88, skinMat);
+          const rightArm = makeSpecLimb(0.68, 1.88, skinMat);
+          makeSpecLimb(-0.25, 0.9, pantsMat);
+          makeSpecLimb(0.25, 0.9, pantsMat);
+          bodyPivot.add(head, hat, torso);
+          root.traverse((ch: any) => {
+            if (ch.isMesh) ch.castShadow = true;
+          });
+          root.scale.setScalar(0.92);
+          scene.add(root);
+          const side: -1 | 1 = sp % 2 === 0 ? -1 : 1;
+          const dist = -8 + Math.floor(sp / 2) * 5.2;
+          spectatorPool.push({ root, bodyPivot, leftArm, rightArm, torsoMat, hatMat, dist, side });
+        }
+
         // Gắn/hoán đổi mô hình NotBlox GLB + khởi tạo AnimationMixer chuẩn NotBlox cho Top 24 tay đua
         const ensureSlotGlb = (slot: RacerSlot, wantGlb: boolean, charIdx: number) => {
           if (!wantGlb) {
@@ -2484,6 +2562,28 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             item.mesh.rotation.y = tSec * 0.22 + item.phase;
           }
 
+          // Cập nhật khán giả đứng xem & cổ vũ dọc 2 bên đường đua (bao gồm các user mới vào chưa nhắn join!)
+          const realSpecs = spectatorsRef ? Array.from(spectatorsRef.current.values()) : [];
+          const activeSpecCount = Math.min(spectatorPool.length, Math.max(12, realSpecs.length));
+          for (let sp = 0; sp < spectatorPool.length; sp++) {
+            const sSlot = spectatorPool[sp];
+            const showSpec = phase !== 'podium' && sp < activeSpecCount;
+            sSlot.root.visible = showSpec;
+            if (!showSpec) continue;
+            const realViewer = realSpecs[sp];
+            if (realViewer) {
+              sSlot.torsoMat.color.setHex(realViewer.shirtColor);
+            }
+            const sc = sampleCircuit(sSlot.dist, sSlot.side * (halfW + 3.9));
+            sSlot.root.position.set(sc.x, 0, sc.z);
+            // Xoay mặt khán giả hướng vào trong mặt đường để xem và cổ vũ các tay đua!
+            sSlot.root.rotation.set(0, sc.yaw + (sSlot.side === -1 ? Math.PI / 2 : -Math.PI / 2), 0);
+            const cheerHop = Math.abs(Math.sin(tSec * (5.2 + (sp % 4) * 0.7) + sp * 1.3)) * 0.34;
+            sSlot.bodyPivot.position.y = cheerHop;
+            sSlot.leftArm.rotation.x = -2.45 + Math.sin(tSec * 9.5 + sp) * 0.42;
+            sSlot.rightArm.rotation.x = -2.45 - Math.sin(tSec * 9.5 + sp) * 0.42;
+          }
+
           // Cập nhật 60 nhân vật trên đường đua uốn lượn
           for (let i = 0; i < pool.length; i++) {
             const slot = pool[i];
@@ -2636,6 +2736,35 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.bodyPivot.position.set(0, hover, 0);
               slot.bodyPivot.rotation.set(0.28, 0, bankAngle);
               slot.shadowMesh.scale.setScalar(0.85);
+            } else if (phase === 'lobby') {
+              // Trong thời gian chờ (> 5s): nhân vật khởi động chân tay ngẫu nhiên tự nhiên;
+              // Còn <= 5s cuối: toàn bộ nhân vật cúi người vào thế chuẩn bị xuất phát!
+              const isStartReady = timerRef.current <= 5;
+              if (isStartReady) {
+                const tense = Math.sin(tSec * 16 + i * 1.9) * 0.02;
+                slot.bodyPivot.position.set(0, -0.22 + tense, 0);
+                slot.bodyPivot.rotation.set(0.46, 0, 0);
+              } else {
+                const warmSlot = Math.floor(tSec / 2.8 + i * 0.7) % 4;
+                if (warmSlot === 1) {
+                  // Nhảy bật khởi động tại chỗ
+                  slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 6.5 + i)) * 0.42, 0);
+                  slot.bodyPivot.rotation.set(0.06, 0, 0);
+                } else if (warmSlot === 0) {
+                  // Chạy bước nhỏ làm nóng tại chỗ
+                  slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 11 + i)) * 0.14, 0);
+                  slot.bodyPivot.rotation.set(0.14, Math.sin(tSec * 2 + i) * 0.1, 0);
+                } else if (warmSlot === 2) {
+                  // Vung tay nhún nhảy khởi động
+                  slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 4.5 + i)) * 0.12, 0);
+                  slot.bodyPivot.rotation.set(0, Math.sin(tSec * 3 + i) * 0.18, 0);
+                } else {
+                  // Thở sâu, xoay vai quan sát đối thủ
+                  slot.bodyPivot.position.set(0, 0, 0);
+                  slot.bodyPivot.rotation.set(0, Math.sin(tSec * 1.4 + i) * 0.25, 0);
+                }
+              }
+              slot.shadowMesh.scale.setScalar(1.0);
             } else {
               slot.bodyPivot.position.set(0, 0, 0);
               const forwardLean = isSprint ? 0.24 : r.speed > 1 ? 0.16 : 0;
@@ -2713,17 +2842,41 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
             // Hoạt ảnh chuyển động đồng bộ 6 trạng thái ('idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall')
             if (slot.glbHolder.visible) {
-              const animState: NotBloxAnimState =
-                isRocket || isDragon || isSuperman
-                  ? 'jump'
-                  : isJetpack || isLanding
-                    ? 'fall'
-                    : isSprint && r.speed > 1
-                      ? 'sprint'
-                      : r.speed > 1
-                        ? 'run'
-                        : 'idle';
-              updateNotBloxAnimation(slot, animState, dt, r.speed, tSec, i);
+              let animState: NotBloxAnimState;
+              if (phase === 'lobby') {
+                if (timerRef.current <= 5) {
+                  animState = 'idle';
+                } else {
+                  const warmSlot = Math.floor(tSec / 2.8 + i * 0.7) % 4;
+                  animState =
+                    warmSlot === 0
+                      ? 'run'
+                      : warmSlot === 1
+                        ? 'jump'
+                        : warmSlot === 2
+                          ? 'dance'
+                          : 'idle';
+                }
+              } else {
+                animState =
+                  isRocket || isDragon || isSuperman
+                    ? 'jump'
+                    : isJetpack || isLanding
+                      ? 'fall'
+                      : isSprint && r.speed > 1
+                        ? 'sprint'
+                        : r.speed > 1
+                          ? 'run'
+                          : 'idle';
+              }
+              updateNotBloxAnimation(
+                slot,
+                animState,
+                dt,
+                phase === 'lobby' ? 16 : r.speed,
+                tSec,
+                i,
+              );
             } else if (isSuperman) {
               // Tư thế bay Siêu Nhân cho model dự phòng: 1 tay giơ thẳng về trước, 2 chân duỗi thẳng
               slot.leftArm.rotation.x = -3.05;
@@ -3421,8 +3574,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             if (!el) continue;
             const r = topForBadges[i];
             if (phase === 'podium' && r.rank <= 3) {
+              // Đặt Avatar + Tên chỉnh chu ngay trên mặt trước bục trao giải 3D (không che nhân vật!)
               const pod = getPodiumSlotWorld(r.rank);
-              projVec.set(pod.x, pod.y + (r.rank === 1 ? 4.5 : 3.7), pod.z);
+              projVec.set(pod.x, Math.max(0.85, pod.y - 0.35), pod.z);
+            } else if (phase === 'podium') {
+              el.style.opacity = '0';
+              continue;
             } else {
               const s = sampleCircuit(r.z, r.x);
               const headH =

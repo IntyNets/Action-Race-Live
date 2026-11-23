@@ -8,6 +8,7 @@ import {
   MinimapDot,
   RACE_CONSTANTS,
   RacerState,
+  SpectatorInfo,
   UserProfile,
   VipBannerEvent,
 } from './raceTypes';
@@ -112,6 +113,7 @@ export interface ActivityFeedItem {
 
 export function useRaceEngine() {
   const racersRef = useRef<Map<string, RacerState>>(new Map());
+  const spectatorsRef = useRef<Map<string, SpectatorInfo>>(new Map());
   const phaseRef = useRef<MatchPhase>('lobby');
   const timerRef = useRef<number>(RACE_CONSTANTS.LOBBY_SECONDS);
   const totalLapsRef = useRef<number>(RACE_CONSTANTS.DEFAULT_LAPS);
@@ -333,6 +335,24 @@ export function useRaceEngine() {
     }, duration);
   }, []);
 
+  const addSpectator = useCallback((userId: string, nickname: string, avatar: string) => {
+    if (!userId || userId.startsWith('bot_') || racersRef.current.has(userId)) return;
+    const map = spectatorsRef.current;
+    const h = hashCode(userId || nickname);
+    const shirtColor = SHIRT_PALETTE[h % SHIRT_PALETTE.length];
+    map.set(userId, {
+      id: userId,
+      nickname: nickname || 'Khán giả',
+      avatar: avatar || makeAvatarDataUrl(nickname || 'K', shirtColor),
+      shirtColor,
+      joinedAt: Date.now(),
+    });
+    if (map.size > 24) {
+      const oldestKey = map.keys().next().value;
+      if (oldestKey) map.delete(oldestKey);
+    }
+  }, []);
+
   const ensureRacer = useCallback(
     (
       userId: string,
@@ -454,6 +474,8 @@ export function useRaceEngine() {
         }
       }
 
+      // Khi người xem chính thức join vào đường đua thì rời hàng khán giả cổ vũ
+      spectatorsRef.current.delete(userId);
       map.set(userId, racer);
       setRacerCount(map.size);
       if (!isBot) {
@@ -584,6 +606,7 @@ export function useRaceEngine() {
       graphicsQuality: graphicsQualityRef.current,
       cameraMode: cameraModeRef.current,
       racers: racersList,
+      spectators: Array.from(spectatorsRef.current.values()),
     };
 
     if (!immediate && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -802,6 +825,14 @@ export function useRaceEngine() {
         setPodiumTop3(sorted.slice(0, 3));
       }
     }
+
+    if (Array.isArray(snap.spectators)) {
+      const nextSpec = new Map<string, SpectatorInfo>();
+      for (const sp of snap.spectators) {
+        if (sp && sp.id) nextSpec.set(sp.id, sp as SpectatorInfo);
+      }
+      spectatorsRef.current = nextSpec;
+    }
   }, []);
 
   const startNewLobby = useCallback(
@@ -988,6 +1019,7 @@ export function useRaceEngine() {
     }) => {
       followersRef.current.add(payload.userId);
       if (payload.username) followersRef.current.add(payload.username);
+      addSpectator(payload.userId, payload.nickname, payload.avatar);
       playJoinSfx();
       pushFeed(
         `➕ ${payload.nickname} đã Follow kênh! Nhắn "join" để vào đường đua ngay!`,
@@ -1027,7 +1059,11 @@ export function useRaceEngine() {
       // Quy tắc vào game: người chơi phải nhắn "join" VÀ đã Follow kênh (đã Follow từ trước hoặc vừa Follow đều được)
       const commentTrim = String(payload.comment || '').trim();
       const wantsJoin = /(?:^|\s)[!/#]?join(?:\s|$)/i.test(commentTrim);
-      if (!wantsJoin) return;
+      if (!wantsJoin) {
+        // Người xem chưa join game -> đứng cổ vũ ở khu khán giả 2 bên đường đua!
+        addSpectator(payload.userId, payload.nickname, payload.avatar);
+        return;
+      }
 
       const savedProf =
         savedUsersRef.current.get(payload.userId) ||
@@ -1041,6 +1077,7 @@ export function useRaceEngine() {
       );
 
       if (!hasFollowed) {
+        addSpectator(payload.userId, payload.nickname, payload.avatar);
         pushFeed(
           `🔒 ${payload.nickname} ơi, hãy Follow kênh trước rồi nhắn "join" để vào đua nhé!`,
           'system',
@@ -1426,7 +1463,7 @@ export function useRaceEngine() {
           followersRef.current.add(uid);
           if (uname) followersRef.current.add(uname);
         }
-        // Chỉ tự động cho Chủ Phòng (isHost) vào vạch xuất phát khi kết nối TikTok; khán giả phải Follow + nhắn "join"
+        // Chỉ tự động cho Chủ Phòng (isHost) vào vạch xuất phát khi kết nối TikTok; khán giả mới vào đứng cổ vũ bên lề đường!
         if (data.isHost) {
           handleChat({
             userId: uid,
@@ -1437,6 +1474,12 @@ export function useRaceEngine() {
             isFollower: true,
             platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
           });
+        } else {
+          addSpectator(
+            uid,
+            String(data.nickname || data.username || 'Khán giả'),
+            String(data.avatar || ''),
+          );
         }
       } else if (type === 'like') {
         handleLike({
@@ -2102,6 +2145,7 @@ export function useRaceEngine() {
 
   return {
     racersRef,
+    spectatorsRef,
     phaseRef,
     timerRef,
     cameraDirectorRef,

@@ -710,6 +710,10 @@ export class CameraDirector {
   private switchOffsetDist = 0;
   private switchOffsetLat = 0;
   private trackedRacerId: string | null = null;
+  // Tay đua ngẫu nhiên được camera quay cận cảnh trong 5 giây cuối chuẩn bị xuất phát
+  private countdownFocusId: string | null = null;
+  private countdownSwitchTimer = 0;
+  private countdownAngleSign = 1;
 
   constructor() {
     const s0 = sampleCircuit(0, 0);
@@ -779,6 +783,8 @@ export class CameraDirector {
     this.switchOffsetDist = 0;
     this.switchOffsetLat = 0;
     this.trackedRacerId = null;
+    this.countdownFocusId = null;
+    this.countdownSwitchTimer = 0;
     this.state = 'IDLE';
     this.hudDirty = true;
   }
@@ -811,11 +817,16 @@ export class CameraDirector {
     // ==========================================================================
     if (matchPhase === 'lobby') {
       this.raceStartElapsedSec = 0;
-      const nextState: CameraStateName = timerSec <= 3 ? 'COUNTDOWN' : 'IDLE';
+      // > 5s chờ: Mode D (OVERVIEW) toàn cảnh vạch xuất phát & khán giả cổ vũ;
+      // <= 5s cuối: COUNTDOWN quay cận cảnh ngẫu nhiên từng nhân vật đang vào thế chuẩn bị xuất phát!
+      const nextState: CameraStateName = timerSec <= 5 ? 'COUNTDOWN' : 'OVERVIEW';
       if (this.state !== nextState) {
         this.state = nextState;
         this.activeEvent = null;
         this.queue.clear();
+        if (nextState === 'COUNTDOWN') {
+          this.countdownSwitchTimer = 0;
+        }
         this.hudDirty = true;
       }
     } else if (matchPhase === 'podium') {
@@ -944,39 +955,56 @@ export class CameraDirector {
       this.hudDirty = true;
     }
 
-    if (this.state === 'IDLE') {
-      // IDLE: Camera đặt phía sau nhân vật tại vạch xuất phát, giữ khung hình ổn định
+    if (this.state === 'IDLE' || (matchPhase === 'lobby' && this.state === 'OVERVIEW')) {
+      // MODE D: OVERVIEW toàn cảnh vạch xuất phát trong thời gian chờ (> 5s), thấy toàn bộ tay đua đang khởi động & khán giả đứng cổ vũ
       this.trackInitialized = false;
-      const focus =
-        (this.activeEvent?.userId ? racersMap.get(this.activeEvent.userId) : undefined) ||
-        leader;
-      const focusLat = focus ? focus.x * 0.65 : 0;
-      const s0 = sampleCircuit(0, focusLat);
-      const gentleSway = Math.sin(tSec * 0.45) * 1.4;
+      const s0 = sampleCircuit(-2, 0);
+      const gentleOrbit = Math.sin(tSec * 0.32) * 11.0;
       rawPose = {
-        posX: s0.x - s0.tx * 10.4 + s0.rx * gentleSway,
-        posY: 5.0,
-        posZ: s0.z - s0.tz * 10.4 + s0.rz * gentleSway,
-        lookX: s0.x + s0.tx * 2.8,
-        lookY: 2.1,
-        lookZ: s0.z + s0.tz * 2.8,
-        fov: 66,
-        transitionSpeed: 4.5,
+        posX: s0.x - s0.tx * 21.0 + s0.rx * gentleOrbit,
+        posY: 14.5,
+        posZ: s0.z - s0.tz * 21.0 + s0.rz * gentleOrbit,
+        lookX: s0.x + s0.tx * 2.5,
+        lookY: 1.8,
+        lookZ: s0.z + s0.tz * 2.5,
+        fov: 64,
+        transitionSpeed: 3.8,
       };
     } else if (this.state === 'COUNTDOWN') {
-      // COUNTDOWN: Camera tiến nhẹ gần nhân vật (8.8m, cao 4.4m), tạo cảm giác chuẩn bị bứt tốc xuất phát
+      // 5 giây cuối trước khi xuất phát: camera quay ngẫu nhiên từng nhân vật (đổi mỗi ~1.7s) ở góc điện ảnh cận cảnh 3/4 phía trước
       this.trackInitialized = false;
-      const focusLat = leader ? leader.x * 0.6 : 0;
-      const s0 = sampleCircuit(0, focusLat);
+      this.countdownSwitchTimer -= dt;
+      if (
+        (this.countdownSwitchTimer <= 0 ||
+          !this.countdownFocusId ||
+          !racersMap.has(this.countdownFocusId)) &&
+        sortedRacers.length > 0
+      ) {
+        const pool = sortedRacers.filter((r) => r.id !== this.countdownFocusId);
+        const picked =
+          pool.length > 0
+            ? pool[Math.floor(Math.random() * pool.length)]
+            : sortedRacers[0];
+        this.countdownFocusId = picked.id;
+        this.countdownSwitchTimer = 1.7;
+        this.countdownAngleSign = Math.random() < 0.5 ? 1 : -1;
+        this.lastFocusedUserId = picked.id;
+        this.hudDirty = true;
+      }
+      const focusRacer =
+        (this.countdownFocusId ? racersMap.get(this.countdownFocusId) : undefined) || leader;
+      const sR = sampleCircuit(focusRacer ? focusRacer.z : -1, focusRacer ? focusRacer.x : 0);
+      // Góc quay điện ảnh 3/4 phía trước nhân vật đang cúi người chuẩn bị xuất phát
+      const sideX = this.countdownAngleSign * 3.8;
       rawPose = {
-        posX: s0.x - s0.tx * 8.8,
-        posY: 4.4,
-        posZ: s0.z - s0.tz * 8.8,
-        lookX: s0.x + s0.tx * 3.6,
-        lookY: 2.1,
-        lookZ: s0.z + s0.tz * 3.6,
-        fov: 64,
-        transitionSpeed: 5.2,
+        posX: sR.x + sR.tx * 5.8 + sR.rx * sideX,
+        posY: 3.1,
+        posZ: sR.z + sR.tz * 5.8 + sR.rz * sideX,
+        lookX: sR.x,
+        lookY: 1.65,
+        lookZ: sR.z,
+        fov: 58,
+        transitionSpeed: 4.8,
       };
     } else if (this.state === 'RESULT') {
       // RESULT: Camera chuyển sang góc đẹp trước Bục Vinh Danh hiển thị Top 3 nhân vật & kết quả
@@ -1123,7 +1151,10 @@ export class CameraDirector {
     // 3. Kiểm tra va chạm địa hình/cổng + nội suy (tắt trễ world-space khi đang đua để khóa 100% nhân vật ở tốc độ cao)
     const safePose = this.collision.resolve(rawPose);
     const isStaticState =
-      this.state === 'IDLE' || this.state === 'COUNTDOWN' || this.state === 'RESULT';
+      matchPhase === 'lobby' ||
+      this.state === 'IDLE' ||
+      this.state === 'COUNTDOWN' ||
+      this.state === 'RESULT';
     if (this.forceSnap || !isStaticState) {
       this.transition.snap(safePose);
       this.forceSnap = false;

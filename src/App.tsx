@@ -24,6 +24,7 @@ export default function App() {
   const engine = useRaceEngine();
   const {
     racersRef,
+    spectatorsRef,
     phaseRef,
     timerRef,
     cameraDirectorRef,
@@ -263,6 +264,7 @@ export default function App() {
       {/* Cảnh 3D Three.js Đường Đua Uốn Lượn & Smart Race Camera Director */}
       <Race3DCanvas
         racersRef={racersRef}
+        spectatorsRef={spectatorsRef}
         phaseRef={phaseRef}
         timerRef={timerRef}
         cameraDirectorRef={cameraDirectorRef}
@@ -495,63 +497,13 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================== BẢNG VINH DANH TOP 3 (PODIUM) ==================== */}
+      {/* ==================== THANH TIÊU ĐỀ VINH DANH GỌN (Avatar & Tên hiển thị trực tiếp trên bục 3D, không che nhân vật!) ==================== */}
       {phase === 'podium' && podiumTop3.length > 0 && (
-        <div className="pointer-events-none absolute top-28 left-3 right-3 z-30">
-          <div className="rounded-2xl bg-slate-950/80 border-2 border-amber-300/70 backdrop-blur-md p-3.5 shadow-2xl text-center">
-            <div className="text-xs font-black uppercase tracking-widest text-amber-300">
-              🏆 BẢNG VINH DANH VÁN #{matchNo} ({totalLaps} VÒNG) 🏆
-            </div>
-            <div className="mt-3 grid grid-cols-3 gap-2 items-end">
-              {podiumTop3[1] ? (
-                <div className="flex flex-col items-center bg-slate-800/80 rounded-xl p-2 border border-slate-400/50">
-                  <span className="text-xs font-black text-slate-200">🥈 TOP 2</span>
-                  <img
-                    src={podiumTop3[1].avatar}
-                    alt={podiumTop3[1].nickname}
-                    className="w-11 h-11 rounded-full border-2 border-slate-200 my-1 object-cover"
-                  />
-                  <span className="text-[11px] font-bold truncate max-w-full">
-                    {podiumTop3[1].nickname}
-                  </span>
-                </div>
-              ) : (
-                <div />
-              )}
-
-              {podiumTop3[0] && (
-                <div className="flex flex-col items-center bg-gradient-to-b from-amber-400/35 to-amber-600/25 rounded-xl p-2.5 border-2 border-amber-300 -mt-2 shadow-[0_0_24px_rgba(251,191,36,0.45)]">
-                  <span className="text-xs font-black text-amber-300">👑 QUÁN QUÂN</span>
-                  <img
-                    src={podiumTop3[0].avatar}
-                    alt={podiumTop3[0].nickname}
-                    className="w-14 h-14 rounded-full border-2 border-amber-300 my-1 object-cover"
-                  />
-                  <span className="text-xs font-black text-white truncate max-w-full">
-                    {podiumTop3[0].nickname}
-                  </span>
-                </div>
-              )}
-
-              {podiumTop3[2] ? (
-                <div className="flex flex-col items-center bg-orange-950/60 rounded-xl p-2 border border-orange-400/50">
-                  <span className="text-xs font-black text-orange-300">🥉 TOP 3</span>
-                  <img
-                    src={podiumTop3[2].avatar}
-                    alt={podiumTop3[2].nickname}
-                    className="w-10 h-10 rounded-full border-2 border-orange-300 my-1 object-cover"
-                  />
-                  <span className="text-[11px] font-bold truncate max-w-full">
-                    {podiumTop3[2].nickname}
-                  </span>
-                </div>
-              ) : (
-                <div />
-              )}
-            </div>
-            <div className="mt-2 text-[11px] font-semibold text-sky-300">
-              Ván mới sẽ tự động mở sau {timerSec} giây...
-            </div>
+        <div className="pointer-events-none absolute top-14 left-3 right-3 z-30 flex justify-center">
+          <div className="px-4 py-1.5 rounded-full bg-slate-950/75 border border-amber-300/70 backdrop-blur-md shadow-xl flex items-center gap-2 text-[11px] font-black">
+            <span className="text-amber-300">🏆 VINH DANH VÁN #{matchNo}</span>
+            <span className="text-slate-400">·</span>
+            <span className="text-sky-300">Ván mới sau {timerSec}s</span>
           </div>
         </div>
       )}

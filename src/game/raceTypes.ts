@@ -108,6 +108,14 @@ export interface MinimapDot {
   color: string;
 }
 
+export interface SpectatorInfo {
+  id: string;
+  nickname: string;
+  avatar: string;
+  shirtColor: number;
+  joinedAt: number;
+}
+
 export interface VipBannerEvent {
   id: number;
   nickname: string;
