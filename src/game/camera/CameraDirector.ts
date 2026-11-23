@@ -248,22 +248,22 @@ export class CameraBoundsController {
     }
     const boost = racer.boost;
     if (boost === 'dragon') {
-      // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi xa ~27.5m + cao ~12m để thấy trọn vẹn sải cánh, đuôi lửa, nhân vật & đường đua
-      return { fov: 78, distOffset: 16.8, heightOffset: 6.8, shakeAmp: 0.015 };
+      // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi xa ~25m + cao ~11m, KHÔNG rung lắc, góc điện ảnh ổn định tuyệt đối
+      return { fov: 74, distOffset: 14.5, heightOffset: 5.8, shakeAmp: 0 };
     }
     if (boost === 'superman') {
-      // Siêu nhân bay tốc độ cao kèm hào quang năng lượng & áo choàng: lùi rộng ~17.5m + cao ~8.2m để phô diễn trọn cú bay & hạ cánh
-      return { fov: 77, distOffset: 6.8, heightOffset: 3.0, shakeAmp: 0.012 };
+      // Siêu nhân bay tốc độ cao kèm hào quang năng lượng & áo choàng: lùi rộng ~16m + cao ~7m, KHÔNG rung lắc
+      return { fov: 73, distOffset: 5.8, heightOffset: 2.3, shakeAmp: 0 };
     }
     if (boost === 'rocket') {
-      // Tên lửa siêu tốc: lùi xa ~21.5m + cao ~9.5m để thấy trọn thân tên lửa, ngọn lửa và đường đua phía trước
-      return { fov: 76, distOffset: 10.8, heightOffset: 4.3, shakeAmp: 0.012 };
+      // Tên lửa siêu tốc: lùi xa ~19m + cao ~8.2m, KHÔNG rung lắc
+      return { fov: 73, distOffset: 8.6, heightOffset: 3.4, shakeAmp: 0 };
     }
     if (boost === 'jetpack') {
-      return { fov: 75, distOffset: 4.4, heightOffset: 1.9, shakeAmp: 0.008 };
+      return { fov: 72, distOffset: 3.8, heightOffset: 1.5, shakeAmp: 0 };
     }
     if (boost === 'sprint' || boost === 'join' || boost === 'chat') {
-      return { fov: 73, distOffset: 2.6, heightOffset: 0.95, shakeAmp: 0.005 };
+      return { fov: 71, distOffset: 2.2, heightOffset: 0.8, shakeAmp: 0 };
     }
     if (racer.speed < 14 && racer.speed > 0.5) {
       // SLOW
@@ -403,24 +403,22 @@ export class FrontTrackingCameraMode {
     const speedResp = bounds.computeSpeedResponse(racer);
     const isBigVehicle =
       racer.boost === 'dragon' || racer.boost === 'rocket' || racer.boost === 'superman';
-    // Khi cưỡi Rồng Thần / Tên Lửa: mở góc chính diện xéo 3/4 (~130°) + lùi xa để thấy trọn sải cánh rồng, thân tên lửa, nhân vật & đường đua
-    const subtleAngle = isBigVehicle
-      ? Math.PI * 0.72 + Math.sin(tSec * 0.65) * 0.1
-      : Math.PI - Math.sin(tSec * 0.9) * 0.14;
+    // Góc điện ảnh 3/4 chính diện cực kỳ ổn định (không lắc lư theo sin), khóa trọn nhân vật + hiệu ứng ngay giữa khung hình
+    const cinematicFrontAngle = isBigVehicle ? Math.PI * 0.78 : Math.PI * 0.94;
 
     return {
       dist: Math.max(0, racer.z),
       lat: racer.x,
       speed: racer.speed,
-      orbitAngle: subtleAngle,
-      radius: bounds.clampDistance(11.0 + speedResp.distOffset * 1.08),
-      height: bounds.clampHeight(5.1 + speedResp.heightOffset * 0.95),
+      orbitAngle: cinematicFrontAngle,
+      radius: bounds.clampDistance(10.6 + speedResp.distOffset),
+      height: bounds.clampHeight(4.8 + speedResp.heightOffset * 0.85),
       curveBiasLat: 0,
-      lookAhead: isBigVehicle ? 0.6 : -0.3,
+      lookAhead: 0,
       lookY: getCharacterFollowLookY(racer),
-      fov: bounds.clampFov(Math.min(80, speedResp.fov)),
+      fov: bounds.clampFov(speedResp.fov),
       panSpeed: 8.0,
-      shakeAmp: speedResp.shakeAmp * 0.4,
+      shakeAmp: 0,
     };
   }
 }
@@ -708,6 +706,10 @@ export class CameraDirector {
   private curFov = 70;
   private curYawTx = 0;
   private curYawTz = 1;
+  // Độ lệch chuyển đổi mục tiêu (chỉ dùng khi chuyển từ tay đua này sang tay đua khác, tự triệt tiêu về 0 -> 0.00m độ trễ ở mọi tốc độ!)
+  private switchOffsetDist = 0;
+  private switchOffsetLat = 0;
+  private trackedRacerId: string | null = null;
 
   constructor() {
     const s0 = sampleCircuit(0, 0);
@@ -774,6 +776,9 @@ export class CameraDirector {
     this.curLat = 0;
     this.curSpeed = 0;
     this.curOrbitAngle = 0;
+    this.switchOffsetDist = 0;
+    this.switchOffsetLat = 0;
+    this.trackedRacerId = null;
     this.state = 'IDLE';
     this.hudDirty = true;
   }
@@ -1029,35 +1034,48 @@ export class CameraDirector {
         this.curLookAhead = target.lookAhead;
         this.curLookY = target.lookY;
         this.curFov = target.fov;
+        this.switchOffsetDist = 0;
+        this.switchOffsetLat = 0;
+        this.trackedRacerId = primaryRacer?.id || null;
         const initSample = sampleCircuit(this.curDist, 0);
         this.curYawTx = initSample.tx;
         this.curYawTz = initSample.tz;
       }
 
-      // 1) Feed-forward vận tốc để nhân vật không bao giờ bị trượt hoặc tụt khỏi tâm khung hình (Section 3 & 5)
-      this.curSpeed += (target.speed - this.curSpeed) * (1 - Math.exp(-8.0 * dt));
-      this.curDist += this.curSpeed * dt;
-      const distAlpha = 1 - Math.exp(-target.panSpeed * dt);
-      this.curDist += (target.dist - this.curDist) * distAlpha;
+      // 1) Khóa vị trí mục tiêu KHÔNG ĐỘ TRỄ (Zero-Lag Cinematic Lock):
+      // Khi đổi sang quay tay đua khác, lưu độ lệch (switchOffset) rồi lia mượt về 0;
+      // khi đã bám trên tay đua (kể cả bay Siêu Nhân / Rocket / Rồng ở 400 KM/H), độ trễ = 0.00m -> nhân vật LUÔN nằm trọn giữa khung hình!
+      const nextTrackedId = primaryRacer?.id || null;
+      if (nextTrackedId !== this.trackedRacerId) {
+        this.switchOffsetDist = Math.max(-28, Math.min(28, this.curDist - target.dist));
+        this.switchOffsetLat = Math.max(-12, Math.min(12, this.curLat - target.lat));
+        this.trackedRacerId = nextTrackedId;
+      }
+      const switchDecay = Math.exp(-5.4 * dt);
+      this.switchOffsetDist *= switchDecay;
+      this.switchOffsetLat *= switchDecay;
+      if (Math.abs(this.switchOffsetDist) < 0.01) this.switchOffsetDist = 0;
+      if (Math.abs(this.switchOffsetLat) < 0.01) this.switchOffsetLat = 0;
 
-      // 2) Nội suy mượt tọa độ ngang, khoảng cách, độ cao, FOV và góc quỹ đạo (Orbit Angle)
-      // Blend duration 0.6–1.2 giây (rate ~3.4 -> ~85% trong 0.6s, 98% trong 1.1s)
-      const orbitAlpha = 1 - Math.exp(-3.6 * dt);
-      const paramAlpha = 1 - Math.exp(-4.5 * dt);
-      const latAlpha = 1 - Math.exp(-5.2 * dt);
+      this.curDist = target.dist + this.switchOffsetDist;
+      this.curLat = target.lat + this.switchOffsetLat;
+      this.curSpeed = target.speed;
 
-      this.curLat += (target.lat - this.curLat) * latAlpha;
+      // 2) Chỉ nội suy mượt các thông số ống kính & quỹ đạo điện ảnh (Orbit, Radius, Height, FOV, Heading)
+      const orbitAlpha = 1 - Math.exp(-3.2 * dt);
+      const paramAlpha = 1 - Math.exp(-3.8 * dt);
+
       this.curOrbitAngle += shortestAngleDelta(this.curOrbitAngle, target.orbitAngle) * orbitAlpha;
       this.curRadius += (target.radius - this.curRadius) * paramAlpha;
       this.curHeight += (target.height - this.curHeight) * paramAlpha;
-      this.curCurveBias += (target.curveBiasLat - this.curCurveBias) * (1 - Math.exp(-3.2 * dt));
+      this.curCurveBias += (target.curveBiasLat - this.curCurveBias) * (1 - Math.exp(-2.8 * dt));
       this.curLookAhead += (target.lookAhead - this.curLookAhead) * paramAlpha;
-      this.curLookY += (target.lookY - this.curLookY) * paramAlpha;
-      this.curFov += (target.fov - this.curFov) * (1 - Math.exp(-4.2 * dt));
+      this.curLookY += (target.lookY - this.curLookY) * (1 - Math.exp(-4.6 * dt));
+      this.curFov += (target.fov - this.curFov) * paramAlpha;
 
-      // 3) Độ trễ xoay hướng tự nhiên khi nhân vật rẽ qua khúc cua (Natural Turn Lag - Section 2 & 3)
+      // 3) Hướng xoay camera lượn theo khúc cua siêu mượt kiểu điện ảnh (không giật, không lắc)
       const centerSample = sampleCircuit(this.curDist, 0);
-      const turnLagAlpha = 1 - Math.exp(-5.0 * dt);
+      const turnLagAlpha = 1 - Math.exp(-4.6 * dt);
       this.curYawTx += (centerSample.tx - this.curYawTx) * turnLagAlpha;
       this.curYawTz += (centerSample.tz - this.curYawTz) * turnLagAlpha;
       const yawLen = Math.hypot(this.curYawTx, this.curYawTz) || 1;
@@ -1066,59 +1084,52 @@ export class CameraDirector {
       const smoothRx = -smoothTz;
       const smoothRz = smoothTx;
 
-      // 4) Tính vị trí nhân vật (Follow Target) & vị trí Camera trên quỹ đạo cung tròn quanh nhân vật:
-      // - Khi orbitAngle = 0 (CHASE): cos(0) = 1 -> camera đặt phía sau nhân vật (-smoothTx * radius).
-      // - Khi orbitAngle = ±PI/2 (SIDE): sin(±PI/2) = ±1 -> camera đặt song song bên cạnh nhân vật (±smoothRx * radius).
-      // - Khi orbitAngle = PI (FRONT): cos(PI) = -1 -> camera đặt phía trước nhân vật (+smoothTx * radius) và lùi theo nhân vật!
-      // Nhờ quỹ đạo lượng giác (cos/sin), khi chuyển từ CHASE -> FRONT_TRACKING, camera lướt theo cung tròn mềm qua bên hông nhân vật, KHÔNG BAO GIỜ xuyên qua đầu nhân vật hay xoay 180° đột ngột!
-      const charSample = sampleCircuit(this.curDist, this.curLat * 0.88);
+      // 4) Đặt Camera thuần trên quỹ đạo cung tròn gắn chặt vào tọa độ thực của nhân vật (charSample):
+      // Không trộn curveSample lệch tâm, không rung lắc -> nhân vật luôn ở chính giữa khung hình cực kỳ sắc nét và điện ảnh!
+      const charSample = sampleCircuit(this.curDist, this.curLat);
       const backOffset = Math.cos(this.curOrbitAngle) * this.curRadius;
-      const sideOffset = Math.sin(this.curOrbitAngle) * this.curRadius + this.curCurveBias;
+      const sideOffset =
+        Math.sin(this.curOrbitAngle) * this.curRadius +
+        (this.state === 'CHASE' || this.state === 'OVERVIEW' ? this.curCurveBias * 0.55 : 0);
 
-      // Kết hợp vector hướng chạy có độ trễ tự nhiên (72%) + mẫu đường cong thực tế (28%)
-      const orbitalPosX =
-        charSample.x - smoothTx * backOffset + smoothRx * sideOffset;
-      const orbitalPosZ =
-        charSample.z - smoothTz * backOffset + smoothRz * sideOffset;
+      const orbitalPosX = charSample.x - smoothTx * backOffset + smoothRx * sideOffset;
+      const orbitalPosZ = charSample.z - smoothTz * backOffset + smoothRz * sideOffset;
 
-      const curveSample = sampleCircuit(
-        this.curDist - backOffset,
-        this.curLat * 0.55 + sideOffset * 0.75,
-      );
-
-      // Hiệu ứng rung cực nhẹ (micro-shake) chỉ khi nhận Super Boost (Rocket/Dragon)
-      const shakeX =
-        target.shakeAmp > 0 ? Math.sin(tSec * 47.0) * target.shakeAmp : 0;
-      const shakeY =
-        target.shakeAmp > 0 ? Math.cos(tSec * 53.0) * target.shakeAmp * 0.7 : 0;
-
-      // Điểm nhìn (Follow Target): đặt tại phần ngực & đầu nhân vật, kết hợp nhìn đón nhẹ theo hướng chạy khi ở chế độ Chase/Overview
-      const lookForwardFactor = Math.max(0, Math.cos(this.curOrbitAngle));
+      // Khóa điểm nhìn trực tiếp vào tâm nhân vật (chỉ mở lookAhead rất nhẹ khi đang ở Chase thường / Overview)
+      const isHeroFlight =
+        primaryRacer?.boost === 'superman' ||
+        primaryRacer?.boost === 'rocket' ||
+        primaryRacer?.boost === 'dragon';
+      const lookForwardFactor =
+        !isHeroFlight && (this.state === 'CHASE' || this.state === 'OVERVIEW')
+          ? Math.max(0, Math.cos(this.curOrbitAngle)) * 0.25
+          : 0;
       const effectiveLookAhead = this.curLookAhead * lookForwardFactor;
-      const lookSample = sampleCircuit(
-        this.curDist + effectiveLookAhead,
-        this.curLat * 0.88,
-      );
+      const lookX = charSample.x + smoothTx * effectiveLookAhead;
+      const lookZ = charSample.z + smoothTz * effectiveLookAhead;
 
       rawPose = {
-        posX: orbitalPosX * 0.72 + curveSample.x * 0.28 + shakeX,
-        posY: this.curHeight + shakeY,
-        posZ: orbitalPosZ * 0.72 + curveSample.z * 0.28,
-        lookX: charSample.x * 0.65 + lookSample.x * 0.35,
+        posX: orbitalPosX,
+        posY: this.curHeight,
+        posZ: orbitalPosZ,
+        lookX,
         lookY: this.curLookY,
-        lookZ: charSample.z * 0.65 + lookSample.z * 0.35,
+        lookZ,
         fov: this.curFov,
-        transitionSpeed: 14.5,
+        transitionSpeed: 100,
       };
     }
 
-    // 3. Kiểm tra va chạm địa hình/cổng + nội suy mượt cuối
+    // 3. Kiểm tra va chạm địa hình/cổng + nội suy (tắt trễ world-space khi đang đua để khóa 100% nhân vật ở tốc độ cao)
     const safePose = this.collision.resolve(rawPose);
-    if (this.forceSnap) {
+    const isStaticState =
+      this.state === 'IDLE' || this.state === 'COUNTDOWN' || this.state === 'RESULT';
+    if (this.forceSnap || !isStaticState) {
       this.transition.snap(safePose);
       this.forceSnap = false;
+    } else {
+      this.transition.step(safePose, dt);
     }
-    this.transition.step(safePose, dt);
 
     return {
       posX: this.transition.posX,

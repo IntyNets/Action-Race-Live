@@ -2994,8 +2994,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               camHudNow.state === 'SIDE_TRACKING' ||
               camHudNow.state === 'CHASE');
 
-          // Chiếu chùm sáng Spotlight 3D lên nhân vật đang nhận quà / vượt Top 1 / mới join
-          if (isSpotlightActive && spotRacer) {
+          // Chiếu chùm sáng Spotlight 3D lên nhân vật (ẩn chùm sáng che mờ khi đang hóa Siêu Nhân / Tên Lửa / Rồng để thấy rõ hiệu ứng hào quang sắc nét)
+          const hideConeForHero =
+            spotRacer &&
+            (spotRacer.boost === 'superman' ||
+              spotRacer.boost === 'rocket' ||
+              spotRacer.boost === 'dragon');
+          if (isSpotlightActive && spotRacer && !hideConeForHero) {
             const ss = sampleCircuit(spotRacer.z, spotRacer.x);
             spotlightBeam.visible = true;
             spotlightBeam.position.set(ss.x, 7.0, ss.z);
