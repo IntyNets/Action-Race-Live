@@ -379,6 +379,45 @@ export function useRaceEngine() {
     }
   }, []);
 
+  // Xếp toàn bộ nhân vật ở Phòng Chờ (Lobby) thành lưới xuất phát F1 so le, trải đều toàn mặt đường, tuyệt đối không chồng chéo!
+  const layoutLobbyStartingGrid = useCallback(() => {
+    if (phaseRef.current !== 'lobby') return;
+    const racers = Array.from(racersRef.current.values());
+    if (racers.length === 0) return;
+
+    // Ưu tiên người chơi thật đứng hàng đầu, Bot đứng sau
+    racers.sort((a, b) => {
+      if (Boolean(a.isBot) !== Boolean(b.isBot)) return a.isBot ? 1 : -1;
+      return a.id.localeCompare(b.id);
+    });
+
+    const usableHalfW = RACE_CONSTANTS.TRACK_WIDTH / 2 - 2.0; // ~7.0m mỗi bên -> tổng bề ngang 14m
+    const cols = 5;
+    const rowSpacing = 3.2;
+
+    for (let idx = 0; idx < racers.length; idx++) {
+      const r = racers[idx];
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      const itemsInRow = Math.min(cols, racers.length - row * cols);
+
+      // Căn đều ngang giữa mặt đường cho từng hàng (nếu hàng cuối ít hơn 5 người cũng tự dàn đều cân đối)
+      let xPos = 0;
+      if (itemsInRow > 1) {
+        const spanW = itemsInRow >= cols ? usableHalfW * 2 : (usableHalfW * 2 * (itemsInRow - 1)) / (cols - 1);
+        xPos = -spanW / 2 + (col / (itemsInRow - 1)) * spanW;
+      }
+      // So le nhẹ giữa hàng chẵn và hàng lẻ kiểu vạch xuất phát F1 để thoáng tầm nhìn & không che nhau
+      const staggerX = row % 2 === 1 && itemsInRow < cols ? 0.65 : 0;
+      const finalX = Math.max(-usableHalfW, Math.min(usableHalfW, xPos + staggerX));
+      const finalZ = -1.2 - row * rowSpacing - (col % 2) * 0.45;
+
+      r.x = finalX;
+      r.targetX = finalX;
+      r.z = finalZ;
+    }
+  }, []);
+
   const ensureRacer = useCallback(
     (
       userId: string,
@@ -503,6 +542,9 @@ export function useRaceEngine() {
       // Khi người xem chính thức join vào đường đua thì rời hàng khán giả cổ vũ
       spectatorsRef.current.delete(userId);
       map.set(userId, racer);
+      if (phaseRef.current === 'lobby') {
+        layoutLobbyStartingGrid();
+      }
       setRacerCount(map.size);
       if (!isBot) {
         syncRacerProfilesToServer([racer]);
@@ -549,7 +591,7 @@ export function useRaceEngine() {
       }
       return { racer, created: true };
     },
-    [pushFeed, syncRacerProfilesToServer],
+    [layoutLobbyStartingGrid, pushFeed, syncRacerProfilesToServer],
   );
 
   const applyBoost = useCallback(
@@ -945,9 +987,9 @@ export function useRaceEngine() {
 
   const startRacingPhase = useCallback(() => {
     fillBotsIfNeeded();
-    // Đưa tất cả tay đua về vạch 0 khi bắt đầu
+    // Giữ nguyên khoảng cách hàng xuất phát gọn gàng (chỉ nâng nhẹ tiến sát vạch 0 để không chồng chéo khi chạy)
     racersRef.current.forEach((r) => {
-      r.z = Math.max(0, r.z);
+      r.z = r.z + 1.2;
       r.lap = 1;
     });
     phaseRef.current = 'racing';
