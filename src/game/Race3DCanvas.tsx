@@ -547,6 +547,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           roughness: 0.45,
           metalness: 0.35,
         });
+        const matDarkMetal = new THREE.MeshStandardMaterial({
+          color: 0x334155,
+          metalness: 0.8,
+          roughness: 0.3,
+        });
         const neonCyanMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
         const neonPinkMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
         const neonAmberMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
@@ -1575,11 +1580,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           color: 0xe2e8f0,
           metalness: 0.75,
           roughness: 0.22,
-        });
-        const matDarkMetal = new THREE.MeshStandardMaterial({
-          color: 0x334155,
-          metalness: 0.8,
-          roughness: 0.3,
         });
         const matRocketRed = new THREE.MeshStandardMaterial({
           color: 0xef4444,
