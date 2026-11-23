@@ -83,6 +83,8 @@ const BOOST_BADGE_STYLE: Record<RacerState['boost'], string> = {
   sprint: 'bg-cyan-400 text-slate-950 shadow-[0_0_10px_rgba(34,211,238,0.85)]',
   jetpack: 'bg-amber-400 text-slate-950 shadow-[0_0_10px_rgba(251,191,36,0.85)]',
   rocket: 'bg-rose-500 text-white shadow-[0_0_14px_rgba(244,63,94,0.9)]',
+  superman:
+    'bg-gradient-to-r from-cyan-400 via-sky-400 to-amber-300 text-slate-950 shadow-[0_0_16px_rgba(56,189,248,0.95)]',
   dragon:
     'bg-gradient-to-r from-yellow-300 via-amber-400 to-orange-500 text-slate-950 shadow-[0_0_16px_rgba(251,191,36,0.95)]',
 };
@@ -272,11 +274,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           graphicsQualityRef.current === 'high' ? 2048 : 1024,
         );
         sunLight.shadow.camera.near = 6;
-        sunLight.shadow.camera.far = 155;
-        sunLight.shadow.camera.left = -46;
-        sunLight.shadow.camera.right = 46;
-        sunLight.shadow.camera.top = 46;
-        sunLight.shadow.camera.bottom = -46;
+        sunLight.shadow.camera.far = 175;
+        sunLight.shadow.camera.left = -58;
+        sunLight.shadow.camera.right = 58;
+        sunLight.shadow.camera.top = 58;
+        sunLight.shadow.camera.bottom = -58;
         sunLight.shadow.bias = -0.0005;
         sunLight.shadow.normalBias = 0.04;
         scene.add(sunLight);
@@ -284,6 +286,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
         rimLight.position.set(-50, 30, 80);
         scene.add(rimLight);
+        // Đèn chiếu sáng mặt đường động kiểu The Flash ("chạy tới đâu đường sáng tới đó")
+        const flashRoadLight = new THREE.PointLight(0xfacc15, 0, 30, 1.35);
+        flashRoadLight.position.set(0, 1.8, 0);
+        scene.add(flashRoadLight);
 
         // ---------- Procedural Textures ----------
         const makeAsphaltTexture = () => {
@@ -812,6 +818,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           }
           redBarrierInst.count = rb;
           whiteBarrierInst.count = wb;
+          if (enableWorldShadows) {
+            redBarrierInst.castShadow = true;
+            redBarrierInst.receiveShadow = true;
+            whiteBarrierInst.castShadow = true;
+            whiteBarrierInst.receiveShadow = true;
+          }
           trackRoot.add(redBarrierInst, whiteBarrierInst);
 
           // Duy nhất 1 cổng XUẤT PHÁT / VỀ ĐÍCH (distance = 0)
@@ -916,10 +928,17 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 )
               : null;
 
-          if (quality === 'high') {
+          if (enableWorldShadows) {
             trunkInst.castShadow = true;
+            trunkInst.receiveShadow = true;
             leafBotInst.castShadow = true;
+            leafBotInst.receiveShadow = true;
             leafTopInst.castShadow = true;
+            leafTopInst.receiveShadow = true;
+            if (leafSideInst) {
+              leafSideInst.castShadow = true;
+              leafSideInst.receiveShadow = true;
+            }
           }
 
           treePositions.forEach((tp, idx) => {
@@ -1003,6 +1022,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               grassInst.setMatrixAt(gi++, dummy.matrix);
             }
             grassInst.count = gi;
+            if (enableWorldShadows) {
+              bushInst.castShadow = true;
+              bushInst.receiveShadow = true;
+              grassInst.castShadow = true;
+              grassInst.receiveShadow = true;
+            }
             trackRoot.add(bushInst, grassInst);
           }
 
@@ -1333,6 +1358,47 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           p.sprite.visible = true;
         };
 
+        // ---------- 3B. Vệt Đèn Đường Phát Sáng The Flash ("chạy tới đâu đường sáng tới đó") ----------
+        const FLASH_TRAIL_MAX = 110;
+        const geoRoadGlow = new THREE.PlaneGeometry(2.1, 3.6);
+        geoRoadGlow.rotateX(-Math.PI / 2);
+        interface RoadGlowStamp {
+          active: boolean;
+          life: number;
+          maxLife: number;
+          mesh: any;
+          mat: any;
+        }
+        const roadGlows: RoadGlowStamp[] = [];
+        for (let rg = 0; rg < FLASH_TRAIL_MAX; rg++) {
+          const mat = new THREE.MeshBasicMaterial({
+            map: glowTex,
+            color: 0xfacc15,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const mesh = new THREE.Mesh(geoRoadGlow, mat);
+          mesh.visible = false;
+          scene.add(mesh);
+          roadGlows.push({ active: false, life: 0, maxLife: 1.0, mesh, mat });
+        }
+        let roadGlowCursor = 0;
+        const spawnRoadGlow = (x: number, z: number, yaw: number, color: number, scaleW = 1.0) => {
+          const st = roadGlows[roadGlowCursor];
+          roadGlowCursor = (roadGlowCursor + 1) % FLASH_TRAIL_MAX;
+          st.active = true;
+          st.life = 0.95;
+          st.maxLife = 0.95;
+          st.mat.color.setHex(color);
+          st.mat.opacity = 0.85;
+          st.mesh.position.set(x, 0.085, z);
+          st.mesh.rotation.set(0, yaw, 0);
+          st.mesh.scale.set(scaleW, 1, 1.15);
+          st.mesh.visible = true;
+        };
+
         // ---------- 4. Nạp bất đồng bộ Nhân Vật, Thú Cưng & Đối Tượng 3D từ iErcann/NotBlox ----------
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
@@ -1570,7 +1636,18 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           glbAnimState: NotBloxAnimState | '';
           glbHasClips: boolean;
           glbTintMats: any[];
+          glbAllMats: any[];
           glbLastColor: number;
+          glbOutlineMat: any;
+          supermanAuraGrp: any;
+          supermanCape: any;
+          supermanRings: any[];
+          supermanCone: any;
+          landingShockRing: any;
+          landingShockMat: any;
+          wasSuperman: boolean;
+          supermanLandTimer: number;
+          landingBurstDone: boolean;
           petHolder: any;
           petModelWrap: any;
           petLoadedIdx: number;
@@ -1865,6 +1942,83 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           flashLightningGrp.visible = false;
           root.add(flashLightningGrp);
 
+          // 6) Hiệu ứng Bay Siêu Nhân (Áo choàng đỏ bay phấp phới + Nón sóng xung kích + Vòng năng lượng tỏa quanh người + Hạ cánh siêu nhân)
+          const supermanAuraGrp = new THREE.Group();
+          const capeGeo = new THREE.BoxGeometry(1.18, 1.95, 0.06);
+          const capeMat = new THREE.MeshStandardMaterial({
+            color: 0xdc2626,
+            emissive: 0x7f1d1d,
+            emissiveIntensity: 0.35,
+            roughness: 0.45,
+          });
+          const supermanCape = new THREE.Mesh(capeGeo, capeMat);
+          supermanCape.position.set(0, 1.35, -0.58);
+          supermanCape.rotation.x = 0.32;
+          supermanCape.castShadow = true;
+          supermanAuraGrp.add(supermanCape);
+
+          const auraConeMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            transparent: true,
+            opacity: 0.28,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const supermanCone = new THREE.Mesh(
+            new THREE.ConeGeometry(1.45, 3.8, 16, 1, true),
+            auraConeMat,
+          );
+          supermanCone.position.set(0, 1.25, 0.15);
+          supermanAuraGrp.add(supermanCone);
+
+          const supermanRings: any[] = [];
+          const auraRingColors = [0x38bdf8, 0xfacc15, 0x22d3ee];
+          for (let ar = 0; ar < 3; ar++) {
+            const rm = new THREE.MeshBasicMaterial({
+              color: auraRingColors[ar],
+              transparent: true,
+              opacity: 0.72,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            });
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05 + ar * 0.26, 0.055, 8, 24), rm);
+            ring.rotation.x = Math.PI / 2;
+            ring.position.set(0, 0.45 + ar * 0.72, 0);
+            supermanAuraGrp.add(ring);
+            supermanRings.push(ring);
+          }
+          supermanAuraGrp.visible = false;
+          bodyPivot.add(supermanAuraGrp);
+
+          // Vòng sóng xung kích mặt đất khi Siêu Nhân hạ cánh (Superhero Landing Shockwave)
+          const landingShockMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const landingShockRing = new THREE.Mesh(
+            new THREE.RingGeometry(0.65, 1.18, 28),
+            landingShockMat,
+          );
+          landingShockRing.rotation.x = -Math.PI / 2;
+          landingShockRing.position.y = 0.14;
+          landingShockRing.visible = false;
+          root.add(landingShockRing);
+
+          // Vật liệu viền năng lượng bọc theo đúng hình dáng nhân vật (Inverted-Hull Silhouette Outline)
+          const glbOutlineMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            side: THREE.BackSide,
+            transparent: true,
+            opacity: 0.85,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+
           root.visible = false;
           // Bật đổ bóng thật cho nhân vật dự phòng & đạo cụ (Jetpack, Tên Lửa, Rồng Thần)
           [fallbackGrp, jetpackGrp, rocketGrp, dragonGrp].forEach((grp) => {
@@ -1885,7 +2039,18 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             glbAnimState: '',
             glbHasClips: false,
             glbTintMats: [],
+            glbAllMats: [],
             glbLastColor: -1,
+            glbOutlineMat,
+            supermanAuraGrp,
+            supermanCape,
+            supermanRings,
+            supermanCone,
+            landingShockRing,
+            landingShockMat,
+            wasSuperman: false,
+            supermanLandTimer: 0,
+            landingBurstDone: false,
             petHolder,
             petModelWrap,
             petLoadedIdx: -1,
@@ -1946,6 +2111,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             slot.glbActions.clear();
             slot.glbAnimState = '';
             slot.glbTintMats = [];
+            slot.glbAllMats = [];
             slot.glbLastColor = -1;
             const tpl = glbTemplates[chosenIdx]!;
             const cloned = SkeletonUtils.clone(tpl.scene);
@@ -1996,6 +2162,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               const cloneOne = (m: any) => {
                 const cm = m.clone();
                 if (typeof cm.metalness === 'number') cm.metalness = 0;
+                slot.glbAllMats.push(cm);
                 const matName = `${cm.name || ''}`.toLowerCase();
                 const isSkinMat =
                   matName.includes('skin') ||
@@ -2019,6 +2186,26 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             });
 
             slot.glbHolder.add(cloned);
+            // Tạo lớp vỏ viền năng lượng (Inverted-Hull Silhouette Outline) bám khớp 100% theo hình dáng & xương của nhân vật khi bay Siêu Nhân
+            const outlineMeshes: any[] = [];
+            cloned.traverse((ch: any) => {
+              if (ch.isSkinnedMesh && ch.geometry && ch.skeleton) {
+                const om = new THREE.SkinnedMesh(ch.geometry, slot.glbOutlineMat);
+                om.bind(ch.skeleton, ch.bindMatrix);
+                om.scale.setScalar(1.065);
+                om.visible = false;
+                om.frustumCulled = false;
+                if (ch.parent) ch.parent.add(om);
+                outlineMeshes.push(om);
+              } else if (ch.isMesh && ch.geometry && !ch.isSkinnedMesh) {
+                const om = new THREE.Mesh(ch.geometry, slot.glbOutlineMat);
+                om.scale.setScalar(1.065);
+                om.visible = false;
+                ch.add(om);
+                outlineMeshes.push(om);
+              }
+            });
+            slot.glbHolder.userData.outlineMeshes = outlineMeshes;
             slot.glbCharIdx = chosenIdx;
             if (tpl.animations && tpl.animations.length > 0) {
               const mixer = new THREE.AnimationMixer(cloned);
@@ -2287,6 +2474,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.rocketGrp.visible = false;
               slot.dragonGrp.visible = false;
               slot.flashLightningGrp.visible = false;
+              slot.supermanAuraGrp.visible = false;
+              slot.landingShockRing.visible = false;
+              slot.wasSuperman = false;
+              slot.supermanLandTimer = 0;
               if (slot.petHolder.visible) {
                 slot.petHolder.position.set(1.25, 0, 0.3);
                 slot.petHolder.scale.setScalar(0.85);
@@ -2302,9 +2493,25 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             slot.root.rotation.set(0, sample.yaw, 0);
 
             const isDragon = r.boost === 'dragon';
+            const isSuperman = r.boost === 'superman';
             const isRocket = r.boost === 'rocket';
             const isJetpack = r.boost === 'jetpack';
             const isSprint = r.boost === 'sprint' || r.boost === 'chat' || r.boost === 'join';
+
+            // Kích hoạt chuỗi Hạ Cánh Siêu Nhân (Superhero Landing) ngay khi vừa kết thúc bay Siêu Nhân
+            if (isSuperman) {
+              slot.wasSuperman = true;
+              slot.supermanLandTimer = 0;
+              slot.landingBurstDone = false;
+            } else if (slot.wasSuperman) {
+              slot.wasSuperman = false;
+              slot.supermanLandTimer = 0.85;
+              slot.landingBurstDone = false;
+            }
+            if (slot.supermanLandTimer > 0) {
+              slot.supermanLandTimer = Math.max(0, slot.supermanLandTimer - dt);
+            }
+            const isLanding = slot.supermanLandTimer > 0;
 
             const scaleTarget = isDragon ? 1.85 : 1.0;
             slot.root.scale.setScalar(scaleTarget);
@@ -2318,6 +2525,45 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.bodyPivot.rotation.set(0.2, 0, bankAngle);
               slot.dragonGrp.position.y = hover - 0.15;
               slot.shadowMesh.scale.setScalar(1.6);
+            } else if (isSuperman) {
+              // Bay lao tới ngang kiểu Siêu Nhân + lượn nghiêng theo khúc cua cực ngầu
+              const hover = 2.55 + Math.sin(tSec * 6.5 + i) * 0.22;
+              slot.bodyPivot.position.set(0, hover, 0.2);
+              slot.bodyPivot.rotation.set(1.16, 0, bankAngle * 1.45);
+              slot.shadowMesh.scale.setScalar(1.1);
+            } else if (isLanding) {
+              // 0.85s -> 0.58s: Lao đáp xuống mặt đất; 0.58s -> 0s: Quỳ hạ cánh 3 điểm kiểu Siêu Nhân + Sóng xung kích bùng nổ!
+              const tLand = slot.supermanLandTimer;
+              if (tLand > 0.58) {
+                const frac = (tLand - 0.58) / 0.27;
+                slot.bodyPivot.position.set(0, frac * 2.55, 0);
+                slot.bodyPivot.rotation.set(0.35 + frac * 0.8, 0, bankAngle);
+              } else {
+                const crouchFrac = Math.sin((tLand / 0.58) * Math.PI);
+                slot.bodyPivot.position.set(0, -0.34 * crouchFrac, 0);
+                slot.bodyPivot.rotation.set(0.46 * crouchFrac, 0, 0);
+                if (!slot.landingBurstDone) {
+                  slot.landingBurstDone = true;
+                  // Nổ vòng tia năng lượng tỏa tròn xung quanh chân khi tiếp đất
+                  for (let k = 0; k < 20; k++) {
+                    const ang = (k / 20) * Math.PI * 2;
+                    spawnParticle({
+                      x: sample.x + Math.cos(ang) * 0.8,
+                      y: 0.35,
+                      z: sample.z + Math.sin(ang) * 0.8,
+                      vx: Math.cos(ang) * (9 + Math.random() * 5),
+                      vy: 2.2 + Math.random() * 2.5,
+                      vz: Math.sin(ang) * (9 + Math.random() * 5),
+                      life: 0.55,
+                      size: 1.15,
+                      grow: 1.5,
+                      gravity: -6.5,
+                      color: k % 2 === 0 ? 0x38bdf8 : 0xfacc15,
+                    });
+                  }
+                }
+              }
+              slot.shadowMesh.scale.setScalar(1.25);
             } else if (isRocket) {
               const hover = 1.15 + Math.sin(tSec * 15 + i) * 0.14;
               slot.bodyPivot.position.set(0, hover + 0.52, -0.1);
@@ -2336,12 +2582,39 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.shadowMesh.scale.setScalar(1.0);
             }
 
+            // Bật viền năng lượng bám đúng hình dáng nhân vật + phát sáng năng lượng khi bay / hạ cánh Siêu Nhân
+            const showEnergyRim = isSuperman || isLanding;
+            const outlineMeshes: any[] | undefined = slot.glbHolder.userData.outlineMeshes;
+            if (outlineMeshes) {
+              slot.glbOutlineMat.color.setHex(
+                Math.sin(tSec * 18 + i) > 0 ? 0x38bdf8 : 0xfacc15,
+              );
+              slot.glbOutlineMat.opacity = isSuperman
+                ? 0.72 + Math.sin(tSec * 22 + i) * 0.2
+                : Math.min(0.85, slot.supermanLandTimer * 1.4);
+              for (let omIdx = 0; omIdx < outlineMeshes.length; omIdx++) {
+                outlineMeshes[omIdx].visible = showEnergyRim;
+              }
+            }
+            for (let gm = 0; gm < slot.glbAllMats.length; gm++) {
+              const mat = slot.glbAllMats[gm];
+              if (mat.emissive) {
+                if (showEnergyRim) {
+                  mat.emissive.setHex(0x0ea5e9);
+                  mat.emissiveIntensity = isSuperman ? 0.45 : 0.3;
+                } else if (mat.emissiveIntensity !== 0) {
+                  mat.emissive.setHex(0x000000);
+                  mat.emissiveIntensity = 0;
+                }
+              }
+            }
+
             // Hoạt ảnh chuyển động đồng bộ 6 trạng thái ('idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall')
             if (slot.glbHolder.visible) {
               const animState: NotBloxAnimState =
-                isRocket || isDragon
+                isRocket || isDragon || isSuperman
                   ? 'jump'
-                  : isJetpack
+                  : isJetpack || isLanding
                     ? 'fall'
                     : isSprint && r.speed > 1
                       ? 'sprint'
@@ -2349,6 +2622,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                         ? 'run'
                         : 'idle';
               updateNotBloxAnimation(slot, animState, dt, r.speed, tSec, i);
+            } else if (isSuperman) {
+              // Tư thế bay Siêu Nhân cho model dự phòng: 1 tay giơ thẳng về trước, 2 chân duỗi thẳng
+              slot.leftArm.rotation.x = -3.05;
+              slot.rightArm.rotation.x = -3.05;
+              slot.leftLeg.rotation.x = 0.12;
+              slot.rightLeg.rotation.x = 0.12;
             } else if (isRocket || isDragon) {
               slot.leftLeg.rotation.x = -0.75;
               slot.rightLeg.rotation.x = -0.75;
@@ -2369,6 +2648,46 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             slot.jetpackGrp.visible = isJetpack;
             slot.rocketGrp.visible = isRocket;
             slot.dragonGrp.visible = isDragon;
+            slot.supermanAuraGrp.visible = isSuperman;
+
+            // Hiệu ứng áo choàng, nón sóng xung kích & vòng năng lượng tỏa quanh người khi bay Siêu Nhân
+            if (isSuperman) {
+              slot.supermanCape.rotation.x = 0.28 + Math.sin(tSec * 24 + i) * 0.16;
+              slot.supermanCone.rotation.y = tSec * 6;
+              slot.supermanCone.scale.setScalar(0.95 + Math.sin(tSec * 18 + i) * 0.12);
+              for (let ar = 0; ar < slot.supermanRings.length; ar++) {
+                const ring = slot.supermanRings[ar];
+                const wave = ((tSec * 2.8 + ar * 0.33) % 1);
+                ring.position.y = 2.5 - wave * 2.8;
+                ring.scale.setScalar(0.75 + wave * 0.85);
+                ring.rotation.z = tSec * (ar % 2 === 0 ? 5 : -5);
+              }
+              if (i < 20 && Math.random() < 0.85) {
+                spawnParticle({
+                  x: sample.x + (Math.random() - 0.5) * 1.9,
+                  y: 2.2 + (Math.random() - 0.5) * 1.4,
+                  z: sample.z + (Math.random() - 0.5) * 1.9,
+                  vx: -sample.tx * 12 + (Math.random() - 0.5) * 3.5,
+                  vy: (Math.random() - 0.4) * 2.2,
+                  vz: -sample.tz * 12 + (Math.random() - 0.5) * 3.5,
+                  life: 0.42,
+                  size: 1.05,
+                  grow: 1.4,
+                  color: Math.random() < 0.55 ? 0x38bdf8 : 0xfacc15,
+                });
+              }
+            }
+
+            // Vòng sóng xung kích mặt đất tỏa rộng khi Siêu Nhân hạ cánh
+            if (isLanding && slot.supermanLandTimer <= 0.58) {
+              const p = 1 - slot.supermanLandTimer / 0.58;
+              slot.landingShockRing.visible = true;
+              slot.landingShockRing.scale.setScalar(0.6 + p * 8.4);
+              slot.landingShockMat.opacity = (1 - p) * 0.92;
+              slot.landingShockMat.color.setHex(p < 0.4 ? 0xfacc15 : 0x38bdf8);
+            } else {
+              slot.landingShockRing.visible = false;
+            }
 
             // Thú cưng VIP chạy lon ton theo sát bên cạnh người chơi (tự co giãn cân đối kể cả khi hóa Rồng)
             if (slot.petHolder.visible) {
@@ -2392,13 +2711,35 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             const backX = -sample.tx;
             const backZ = -sample.tz;
 
-            // Hiệu ứng Tia Sét Speed-Force kiểu The Flash khi tăng tốc (MỌI boost != 'none')
+            // Hiệu ứng Tia Sét Speed-Force kiểu The Flash + Phát sáng đường đi như đèn ("chạy tới đâu đường sáng tới đó")
             const hasBoost = r.boost !== 'none';
             slot.flashLightningGrp.visible = hasBoost;
             if (hasBoost) {
+              const trailColor = isDragon
+                ? 0xfde047
+                : isSuperman
+                  ? 0x38bdf8
+                  : isRocket
+                    ? 0xf43f5e
+                    : isJetpack
+                      ? 0xfb923c
+                      : 0xfacc15;
+              // In dấu ánh sáng lên mặt đường ngay dưới chân tay đua để đường sáng rực theo từng bước chạy!
+              if (i < 18 && r.speed > 2 && Math.random() < 0.65) {
+                spawnRoadGlow(
+                  sample.x,
+                  sample.z,
+                  sample.yaw,
+                  trailColor,
+                  isDragon ? 2.1 : isSuperman || isRocket ? 1.45 : 1.05,
+                );
+              }
               if (isDragon) {
                 slot.flashMatA.color.setHex(0xfef08a);
                 slot.flashMatB.color.setHex(0xf97316);
+              } else if (isSuperman) {
+                slot.flashMatA.color.setHex(0x38bdf8);
+                slot.flashMatB.color.setHex(0xfacc15);
               } else if (isRocket) {
                 slot.flashMatA.color.setHex(0xf43f5e);
                 slot.flashMatB.color.setHex(0xfacc15);
@@ -2616,6 +2957,20 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             p.mat.opacity = ratio * (p.mat.blending === THREE.NormalBlending ? 0.5 : 0.95);
           }
 
+          // Cập nhật vệt sáng mặt đường The Flash (mờ dần mượt mà sau khi nhân vật chạy qua)
+          for (let rg = 0; rg < FLASH_TRAIL_MAX; rg++) {
+            const st = roadGlows[rg];
+            if (!st.active) continue;
+            st.life -= dt;
+            if (st.life <= 0) {
+              st.active = false;
+              st.mesh.visible = false;
+              continue;
+            }
+            const k = st.life / st.maxLife;
+            st.mat.opacity = k * 0.82;
+          }
+
           // ---------- Smart Race Camera Director (State Machine 8 trạng thái) ----------
           const director = cameraDirectorRef.current;
           const camPose = director.update({
@@ -2655,7 +3010,27 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             spotlightBeam.visible = false;
           }
 
-          const focusBoost = (spotRacer || allRacers[0])?.boost || 'none';
+          const focusRacerNow = spotRacer || allRacers[0];
+          const focusBoost = focusRacerNow?.boost || 'none';
+
+          // Đèn chiếu mặt đường thực (PointLight) đi theo tay đua đang tăng tốc -> đường nhựa, lề đường & cỏ xung quanh sáng rực theo từng bước chạy!
+          if (focusRacerNow && focusBoost !== 'none' && (phase === 'racing' || phase === 'countdown')) {
+            const fs = sampleCircuit(focusRacerNow.z, focusRacerNow.x);
+            flashRoadLight.position.set(fs.x, 1.9, fs.z);
+            flashRoadLight.color.setHex(
+              focusBoost === 'superman'
+                ? 0x38bdf8
+                : focusBoost === 'rocket'
+                  ? 0xf43f5e
+                  : focusBoost === 'jetpack'
+                    ? 0xf97316
+                    : 0xfacc15,
+            );
+            flashRoadLight.intensity =
+              focusBoost === 'dragon' || focusBoost === 'superman' ? 11.0 : 8.0;
+          } else {
+            flashRoadLight.intensity = 0;
+          }
 
           if (speedLinesRef.current) {
             const showLines =
@@ -2779,9 +3154,25 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               );
               droneCamera.lookAt(droneCx, 0, droneCz);
 
-              // Tạm tắt sương mù và phóng to rõ nhân vật trong khung Drone để nhìn sắc nét từ trên cao
+              // Tạm tắt sương mù, phóng to nhân vật & tăng ánh sáng riêng cho góc Drone ở map Thành Phố Về Đêm để nhìn rõ toàn bộ khung cảnh
               const savedFog = scene.fog.density;
+              const isNightCity = getActiveMap().theme.sceneryType === 'city';
+              const savedHemiInt = hemiLight.intensity;
+              const savedHemiSky = hemiLight.color.getHex();
+              const savedSunInt = sunLight.intensity;
+              const savedExposure = renderer.toneMappingExposure;
+              const savedBldgEmissive = buildingBodyMat.emissive.getHex();
+              const savedBldgEmissiveInt = buildingBodyMat.emissiveIntensity;
+
               scene.fog.density = 0;
+              if (isNightCity) {
+                hemiLight.intensity = 2.6;
+                hemiLight.color.setHex(0x93c5fd);
+                sunLight.intensity = 2.3;
+                renderer.toneMappingExposure = 1.65;
+                buildingBodyMat.emissive.setHex(0x312e81);
+                buildingBodyMat.emissiveIntensity = 0.6;
+              }
               skyDome.position.copy(droneCamera.position);
               for (let k = 0; k < pool.length; k++) {
                 if (pool[k].root.visible) {
@@ -2801,6 +3192,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 if (pool[k].root.visible) {
                   pool[k].root.scale.divideScalar(2.45);
                 }
+              }
+              if (isNightCity) {
+                hemiLight.intensity = savedHemiInt;
+                hemiLight.color.setHex(savedHemiSky);
+                sunLight.intensity = savedSunInt;
+                renderer.toneMappingExposure = savedExposure;
+                buildingBodyMat.emissive.setHex(savedBldgEmissive);
+                buildingBodyMat.emissiveIntensity = savedBldgEmissiveInt;
               }
               scene.fog.density = savedFog;
               skyDome.position.copy(camera.position);
@@ -2884,11 +3283,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               const headH =
                 r.boost === 'dragon'
                   ? 8.5
-                  : r.boost === 'rocket'
-                    ? 5.3
-                    : r.boost === 'jetpack'
-                      ? 4.6
-                      : 3.75;
+                  : r.boost === 'superman'
+                    ? 5.6
+                    : r.boost === 'rocket'
+                      ? 5.3
+                      : r.boost === 'jetpack'
+                        ? 4.6
+                        : 3.75;
               projVec.set(s.x, headH, s.z);
             }
             projVec.project(camera);

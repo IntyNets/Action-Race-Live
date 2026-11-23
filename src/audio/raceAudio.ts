@@ -206,11 +206,14 @@ export function playCrowdCheerSfx() {
 }
 
 // ---------- Giọng MC Bình Luận Viên Songấu (Nam Minh & Hoài My - Edge TTS tiếng Việt) ----------
-let pendingTtsQueue: Array<{ text: string; hype: boolean; voice: 'm' | 'f' }> = [];
+let pendingTtsQueue: Array<{ text: string; hype: boolean; voice: 'm' | 'f'; createdAt: number }> = [];
 let casterToggle: 'm' | 'f' = 'm';
 let captionListener: ((text: string) => void) | null = null;
 let speakingListener: ((speaking: boolean) => void) | null = null;
 let speakingDecayTimer = 0;
+let activeTtsIsPriority = false;
+let activeTtsStartedAt = 0;
+let ttsGeneration = 0;
 
 export function setCommentatorCaptionListener(fn: ((text: string) => void) | null) {
   captionListener = fn;
@@ -236,42 +239,81 @@ function notifyMcSpeaking(speaking: boolean, autoStopMs = 0) {
   }
 }
 
+/** Ngắt ngay câu MC cũ khi chuyển pha game (Lobby -> Đua -> Về đích -> Vinh danh) để MC không bị trễ nhịp */
+export function stopCommentator() {
+  ttsGeneration++;
+  pendingTtsQueue = [];
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.src = '';
+    } catch {}
+    activeTtsAudio = null;
+  }
+  activeTtsIsPriority = false;
+  notifyMcSpeaking(false);
+}
+
 function playNextInTtsQueue() {
   if (!ttsEnabled || pendingTtsQueue.length === 0) return;
   if (activeTtsAudio && !activeTtsAudio.paused) return;
 
+  // Bỏ qua các câu bình luận đã cũ quá 2.4 giây để MC luôn khớp thời gian thực của game
+  const now = Date.now();
+  while (pendingTtsQueue.length > 0 && now - pendingTtsQueue[0].createdAt > 2400) {
+    pendingTtsQueue.shift();
+  }
+  if (pendingTtsQueue.length === 0) {
+    notifyMcSpeaking(false);
+    return;
+  }
+
   const next = pendingTtsQueue.shift()!;
-  lastTtsAt = Date.now();
+  const myGen = ++ttsGeneration;
+  lastTtsAt = now;
+  activeTtsIsPriority = next.hype;
+  activeTtsStartedAt = now;
   captionListener?.(next.text);
-  notifyMcSpeaking(true, 9000);
 
   try {
-    const url = `/api/tts?text=${encodeURIComponent(next.text.slice(0, 280))}&voice=${next.voice}&hype=${next.hype ? '1' : '0'}`;
+    const url = `/api/tts?text=${encodeURIComponent(next.text.slice(0, 220))}&voice=${next.voice}&hype=${next.hype ? '1' : '0'}`;
     const audio = new Audio(url);
+    audio.preload = 'auto';
     audio.volume = 1.0;
     activeTtsAudio = audio;
+    audio.onplaying = () => {
+      if (myGen !== ttsGeneration) return;
+      notifyMcSpeaking(true, 9000);
+    };
     audio.onended = () => {
+      if (myGen !== ttsGeneration) return;
       activeTtsAudio = null;
+      activeTtsIsPriority = false;
       if (pendingTtsQueue.length > 0) {
-        setTimeout(playNextInTtsQueue, 180);
+        setTimeout(playNextInTtsQueue, 60);
       } else {
         notifyMcSpeaking(false);
       }
     };
     audio.onerror = () => {
+      if (myGen !== ttsGeneration) return;
       activeTtsAudio = null;
+      activeTtsIsPriority = false;
       if (pendingTtsQueue.length > 0) {
-        setTimeout(playNextInTtsQueue, 180);
+        setTimeout(playNextInTtsQueue, 60);
       } else {
         notifyMcSpeaking(false);
       }
     };
     void audio.play().catch(() => {
+      if (myGen !== ttsGeneration) return;
       activeTtsAudio = null;
+      activeTtsIsPriority = false;
       notifyMcSpeaking(false);
     });
   } catch {
     activeTtsAudio = null;
+    activeTtsIsPriority = false;
     notifyMcSpeaking(false);
   }
 }
@@ -280,33 +322,39 @@ export function speakCommentator(text: string, priority = false) {
   const clean = text.trim();
   if (!clean) return;
   captionListener?.(clean);
-  // Ước lượng thời lượng MC đang nói để nhấp nháy sóng âm MC cả trên Preview (khi tắt tiếng) lẫn Stage
-  const estMs = Math.max(2200, Math.min(7500, clean.length * 52));
-  notifyMcSpeaking(true, estMs);
-  if (!ttsEnabled) return;
+  if (!ttsEnabled) {
+    // Trên Dashboard Preview (tắt tiếng): nhấp nháy sóng âm MC đồng bộ theo độ dài câu nói
+    const estMs = Math.max(1800, Math.min(5200, clean.length * 42));
+    notifyMcSpeaking(true, estMs);
+    return;
+  }
 
   const now = Date.now();
   const isSpeaking = Boolean(activeTtsAudio && !activeTtsAudio.paused);
 
-  // Luân phiên 2 BLV Nam Minh & Hoài My để tạo không khí 2 bình luận viên tung hứng sôi động
+  // Luân phiên 2 BLV Nam Minh & Hoài My
   casterToggle = casterToggle === 'm' ? 'f' : 'm';
 
   if (priority) {
-    // Sự kiện quan trọng (Tặng quà / Vượt Top 1 / Về đích): ưu tiên đọc ngay hoặc xếp đầu hàng đợi
-    if (isSpeaking && pendingTtsQueue.length >= 2) {
-      pendingTtsQueue[0] = { text: clean, hype: true, voice: casterToggle };
-    } else if (isSpeaking) {
-      pendingTtsQueue.unshift({ text: clean, hype: true, voice: casterToggle });
+    // Sự kiện quan trọng / Chuyển pha: ngắt ngay câu bình luận thường (hoặc câu cũ > 1.8s) để đọc NGAY LẬP TỨC không bị delay!
+    if (isSpeaking && (!activeTtsIsPriority || now - activeTtsStartedAt > 1800)) {
+      stopCommentator();
+      pendingTtsQueue = [{ text: clean, hype: true, voice: casterToggle, createdAt: now }];
+      playNextInTtsQueue();
+      return;
+    }
+    if (isSpeaking) {
+      pendingTtsQueue = [{ text: clean, hype: true, voice: casterToggle, createdAt: now }];
     } else {
-      pendingTtsQueue = [{ text: clean, hype: true, voice: casterToggle }];
+      pendingTtsQueue = [{ text: clean, hype: true, voice: casterToggle, createdAt: now }];
       playNextInTtsQueue();
     }
     return;
   }
 
-  // Bình luận diễn biến định kỳ: nếu đang nói hoặc vừa mới nói < 2.2s thì bỏ qua để không chồng câu cũ
-  if (isSpeaking || pendingTtsQueue.length > 0 || now - lastTtsAt < 2200) return;
-  pendingTtsQueue.push({ text: clean, hype: false, voice: casterToggle });
+  // Bình luận diễn biến định kỳ: nếu đang nói hoặc vừa mới nói < 1.8s thì bỏ qua để không xếp hàng gây delay
+  if (isSpeaking || pendingTtsQueue.length > 0 || now - lastTtsAt < 1800) return;
+  pendingTtsQueue = [{ text: clean, hype: false, voice: casterToggle, createdAt: now }];
   playNextInTtsQueue();
 }
 

@@ -27,6 +27,7 @@ import {
   setCommentatorCaptionListener,
   setCommentatorSpeakingListener,
   speakCommentator,
+  stopCommentator,
 } from '../audio/raceAudio';
 
 // Phân tách Chế Độ Live (/?view=stage) và Bảng Điều Khiển (/) giống npc-action-live
@@ -72,7 +73,8 @@ const BOOST_PRIORITY: Record<BoostKind, number> = {
   sprint: 3,
   jetpack: 4,
   rocket: 5,
-  dragon: 6,
+  superman: 6,
+  dragon: 7,
 };
 
 const BOOST_MULTIPLIER: Record<BoostKind, number> = {
@@ -82,6 +84,7 @@ const BOOST_MULTIPLIER: Record<BoostKind, number> = {
   sprint: 1.88,
   jetpack: 2.35,
   rocket: 3.35,
+  superman: 3.95,
   dragon: 4.8,
 };
 
@@ -670,6 +673,22 @@ export function useRaceEngine() {
       if (prevPhase !== snap.phase) {
         phaseRef.current = snap.phase;
         setPhase(snap.phase);
+        if (IS_STAGE) {
+          stopCommentator();
+          if (snap.phase === 'racing') {
+            playCountdownBeep(true);
+            playCrowdCheerSfx();
+            speakCommentator('Xuất phát! Các tay đua đang lao vọt lên phía trước!', true);
+          } else if (snap.phase === 'countdown') {
+            playFinishFanfareSfx();
+            speakCommentator('Đã có tay đua cán đích! Còn 5 giây cuối tranh Top 3!', true);
+          } else if (snap.phase === 'podium') {
+            playFinishFanfareSfx();
+            playCrowdCheerSfx();
+          } else if (snap.phase === 'lobby') {
+            speakCommentator('Mở ván đua mới! Follow kênh và nhắn join để vào sân ngay!', true);
+          }
+        }
         if (snap.phase === 'lobby') {
           cameraDirectorRef.current.resetForNewMatch();
           setPodiumTop3([]);
@@ -827,12 +846,14 @@ export function useRaceEngine() {
       lobbyHypeDoneRef.current = false;
       liveCommentAccumRef.current = 0;
 
+      stopCommentator();
       pushFeed(
         `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Follow kênh & nhắn "join" để vào đường đua!`,
         'system',
       );
       speakCommentator(
-        `Chào mừng cả nhà đến với ván đua số ${matchNoRef.current}, chặng đua ${totalLapsRef.current} vòng! Hãy bấm Follow kênh và nhắn chữ join để lên vạch xuất phát ngay nào! Ai đã Follow trước đó chỉ cần nhắn join là vào đua luôn nhé!`,
+        `Mở ván ${matchNoRef.current}! Follow kênh và nhắn join để vào đua ngay nào!`,
+        true,
       );
       pushRaceSync(true);
     },
@@ -855,14 +876,15 @@ export function useRaceEngine() {
     lastTop1IdRef.current = '';
     setPhase('racing');
     setTimerSec(raceDurationRef.current);
+    stopCommentator();
     playCountdownBeep(true);
     playCrowdCheerSfx();
     pushFeed(
-      `🔥 XUẤT PHÁT ${totalLapsRef.current} VÒNG! Thả tim bật Tia Sét & tặng quà hóa Rồng Thần!`,
+      `🔥 XUẤT PHÁT ${totalLapsRef.current} VÒNG! Thả tim bật Tia Sét & tặng quà hóa Siêu Nhân / Rồng Thần!`,
       'system',
     );
     speakCommentator(
-      `Xuất phát rồi! Cổng đường đua ${totalLapsRef.current} vòng chính thức mở! Các tay đua đang lao vọt về khúc cua đầu tiên! Cả nhà mau thả tim và tặng quà để tiếp lửa bứt tốc nào!`,
+      `Xuất phát rồi! Cuộc đua ${totalLapsRef.current} vòng chính thức bắt đầu!`,
       true,
     );
     pushRaceSync(true);
@@ -877,6 +899,7 @@ export function useRaceEngine() {
     const sorted = Array.from(racersRef.current.values()).sort((a, b) => a.rank - b.rank);
     const winners = sorted.slice(0, 3);
     setPodiumTop3(winners);
+    stopCommentator();
     playFinishFanfareSfx();
     playCrowdCheerSfx();
 
@@ -1154,6 +1177,32 @@ export function useRaceEngine() {
           `Cả khán đài nổ tung! Cảm ơn ${racer.nickname} với siêu phẩm ${payload.giftName}, Rồng Thần đã xuất hiện thống trị bầu trời!`,
         ];
         speakCommentator(dragonLines[commentIdxRef.current++ % dragonLines.length], true);
+      } else if (coins >= 50) {
+        applyBoost(racer, 'superman', 7000, '🦸 SIÊU NHÂN BAY');
+        playRocketSfx();
+        playCrowdCheerSfx();
+        cameraDirectorRef.current.pushEvent({
+          type: 'MAJOR_GIFT_BOOST',
+          userId: racer.id,
+          nickname: racer.nickname,
+          label: `🦸 ${payload.giftName || 'Siêu Nhân Bay'} (${coins} xu)`,
+          durationSec: 4.5,
+        });
+        showVipBanner({
+          nickname: racer.nickname,
+          avatar: racer.avatar,
+          giftName: payload.giftName || 'Siêu Nhân',
+          coins,
+          tier: 'superman',
+        });
+        pushFeed(
+          `🦸 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - HÓA SIÊU NHÂN BAY VÚT XÉ GIÓ!`,
+          'rocket',
+        );
+        speakCommentator(
+          `Siêu nhân xuất hiện! ${racer.nickname} vừa bùng nổ năng lượng bay vút qua cả đoàn đua!`,
+          true,
+        );
       } else if (coins >= 11) {
         applyBoost(racer, 'rocket', 6000, '🚀 TÊN LỬA');
         playRocketSfx();
@@ -1879,6 +1928,7 @@ export function useRaceEngine() {
         | 'like'
         | 'gift_small'
         | 'gift_medium'
+        | 'gift_superman'
         | 'gift_vip'
         | 'fb_chat'
         | 'fb_stars',
@@ -1899,7 +1949,10 @@ export function useRaceEngine() {
         postTestEmit('gift', { ...u, giftName: 'Hoa Hồng', coins: 5, platform: 'tiktok' });
       } else if (action === 'gift_medium') {
         const u = pickRandomOrNewUser(true);
-        postTestEmit('gift', { ...u, giftName: 'Pháo Giấy', coins: 50, platform: 'tiktok' });
+        postTestEmit('gift', { ...u, giftName: 'Pháo Giấy', coins: 30, platform: 'tiktok' });
+      } else if (action === 'gift_superman') {
+        const u = pickRandomOrNewUser(true);
+        postTestEmit('gift', { ...u, giftName: 'Năng Lượng Siêu Nhân', coins: 60, platform: 'tiktok' });
       } else if (action === 'gift_vip') {
         const u = pickRandomOrNewUser(true);
         postTestEmit('gift', { ...u, giftName: 'Rồng Thần VIP', coins: 200, platform: 'tiktok' });

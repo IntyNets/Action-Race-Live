@@ -354,11 +354,13 @@ export default function App() {
                       <span className="flex-1 truncate font-semibold">
                         {r.boost === 'dragon'
                           ? '🐉'
-                          : r.boost === 'rocket'
-                            ? '🚀'
-                            : r.boost === 'jetpack'
-                              ? '🎒'
-                              : ''}
+                          : r.boost === 'superman'
+                            ? '🦸'
+                            : r.boost === 'rocket'
+                              ? '🚀'
+                              : r.boost === 'jetpack'
+                                ? '🎒'
+                                : ''}
                         {r.nickname}
                       </span>
                     </div>
@@ -460,9 +462,11 @@ export default function App() {
           <div
             className={`animate-vip-pop w-full rounded-2xl px-3 py-2 border-2 shadow-2xl backdrop-blur-md flex items-center gap-2.5 ${vipBanner.tier === 'dragon'
                 ? 'bg-gradient-to-r from-amber-500/95 via-orange-600/95 to-rose-600/95 border-yellow-200 shadow-[0_0_40px_rgba(251,191,36,0.9)]'
-                : vipBanner.tier === 'rocket'
-                  ? 'bg-gradient-to-r from-rose-600/95 to-fuchsia-600/95 border-pink-200 shadow-[0_0_28px_rgba(244,63,94,0.8)]'
-                  : 'bg-gradient-to-r from-sky-600/95 to-indigo-600/95 border-sky-200'
+                : vipBanner.tier === 'superman'
+                  ? 'bg-gradient-to-r from-cyan-500/95 via-sky-600/95 to-indigo-600/95 border-cyan-100 shadow-[0_0_36px_rgba(56,189,248,0.9)]'
+                  : vipBanner.tier === 'rocket'
+                    ? 'bg-gradient-to-r from-rose-600/95 to-fuchsia-600/95 border-pink-200 shadow-[0_0_28px_rgba(244,63,94,0.8)]'
+                    : 'bg-gradient-to-r from-sky-600/95 to-indigo-600/95 border-sky-200'
               }`}
           >
             <img
@@ -474,9 +478,11 @@ export default function App() {
               <div className="text-[10px] font-black uppercase tracking-wider text-yellow-100">
                 {vipBanner.tier === 'dragon'
                   ? '🐉 SIÊU QUÀ VIP · CƯỠI RỒNG THẦN (10s)'
-                  : vipBanner.tier === 'rocket'
-                    ? '🚀 CƯỠI TÊN LỬA SIÊU TỐC (6s)'
-                    : '🎒 KÍCH HOẠT JETPACK BAY LƯỚT (4s)'}
+                  : vipBanner.tier === 'superman'
+                    ? '🦸 HÓA SIÊU NHÂN BAY & HẠ CÁNH CỰC NGẦU (7s)'
+                    : vipBanner.tier === 'rocket'
+                      ? '🚀 CƯỠI TÊN LỬA SIÊU TỐC (6s)'
+                      : '🎒 KÍCH HOẠT JETPACK BAY LƯỚT (4s)'}
               </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-sm font-black text-white truncate">{vipBanner.nickname}</span>
@@ -614,11 +620,13 @@ export default function App() {
                   <span className="px-1.5 py-[1px] rounded bg-rose-600 text-white text-[8.5px] font-black uppercase tracking-wider shadow">
                     {focusedRacer.boost === 'dragon'
                       ? 'RỒNG VIP'
-                      : focusedRacer.boost === 'rocket'
-                        ? 'ROCKET'
-                        : focusedRacer.boost === 'jetpack'
-                          ? 'JETPACK'
-                          : 'NITRO'}
+                      : focusedRacer.boost === 'superman'
+                        ? 'SIÊU NHÂN'
+                        : focusedRacer.boost === 'rocket'
+                          ? 'ROCKET'
+                          : focusedRacer.boost === 'jetpack'
+                            ? 'JETPACK'
+                            : 'NITRO'}
                   </span>
                 )}
               </div>
@@ -1471,7 +1479,13 @@ export default function App() {
                   onClick={() => triggerMock('gift_medium')}
                   className="py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 transition"
                 >
-                  🚀 Quà 50 xu (Rocket)
+                  🚀 Quà 30 xu (Rocket)
+                </button>
+                <button
+                  onClick={() => triggerMock('gift_superman')}
+                  className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 font-black transition"
+                >
+                  🦸 Quà 60 xu (Siêu Nhân)
                 </button>
                 <button
                   onClick={() => triggerMock('fb_stars')}

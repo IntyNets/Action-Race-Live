@@ -251,6 +251,10 @@ export class CameraBoundsController {
       // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi xa ~27.5m + cao ~12m để thấy trọn vẹn sải cánh, đuôi lửa, nhân vật & đường đua
       return { fov: 78, distOffset: 16.8, heightOffset: 6.8, shakeAmp: 0.015 };
     }
+    if (boost === 'superman') {
+      // Siêu nhân bay tốc độ cao kèm hào quang năng lượng & áo choàng: lùi rộng ~17.5m + cao ~8.2m để phô diễn trọn cú bay & hạ cánh
+      return { fov: 77, distOffset: 6.8, heightOffset: 3.0, shakeAmp: 0.012 };
+    }
     if (boost === 'rocket') {
       // Tên lửa siêu tốc: lùi xa ~21.5m + cao ~9.5m để thấy trọn thân tên lửa, ngọn lửa và đường đua phía trước
       return { fov: 76, distOffset: 10.8, heightOffset: 4.3, shakeAmp: 0.012 };
@@ -296,8 +300,9 @@ export class CameraCollisionController {
 // ============================================================================
 function getCharacterFollowLookY(racer: RacerState | undefined): number {
   if (!racer) return 2.45;
-  // Nâng nhẹ điểm nhìn (lookY) giúp nhân vật & Rồng/Rocket nằm ở vị trí 3/4 gần về giữa khung hình (giống ảnh tham chiếu)
+  // Nâng nhẹ điểm nhìn (lookY) giúp nhân vật & Rồng/Siêu nhân/Rocket nằm ở vị trí 3/4 gần về giữa khung hình
   if (racer.boost === 'dragon') return 4.35;
+  if (racer.boost === 'superman') return 3.65;
   if (racer.boost === 'rocket') return 3.45;
   if (racer.boost === 'jetpack') return 3.05;
   return 2.5;
@@ -396,7 +401,8 @@ export class FrontTrackingCameraMode {
     }
 
     const speedResp = bounds.computeSpeedResponse(racer);
-    const isBigVehicle = racer.boost === 'dragon' || racer.boost === 'rocket';
+    const isBigVehicle =
+      racer.boost === 'dragon' || racer.boost === 'rocket' || racer.boost === 'superman';
     // Khi cưỡi Rồng Thần / Tên Lửa: mở góc chính diện xéo 3/4 (~130°) + lùi xa để thấy trọn sải cánh rồng, thân tên lửa, nhân vật & đường đua
     const subtleAngle = isBigVehicle
       ? Math.PI * 0.72 + Math.sin(tSec * 0.65) * 0.1

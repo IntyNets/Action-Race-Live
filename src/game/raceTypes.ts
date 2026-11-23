@@ -2,7 +2,7 @@ import { getLapLength } from './trackCurve';
 
 export type MatchPhase = 'lobby' | 'racing' | 'countdown' | 'podium';
 
-export type BoostKind = 'none' | 'join' | 'chat' | 'sprint' | 'jetpack' | 'rocket' | 'dragon';
+export type BoostKind = 'none' | 'join' | 'chat' | 'sprint' | 'jetpack' | 'rocket' | 'superman' | 'dragon';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
@@ -114,7 +114,7 @@ export interface VipBannerEvent {
   avatar: string;
   giftName: string;
   coins: number;
-  tier: 'jetpack' | 'rocket' | 'dragon';
+  tier: 'jetpack' | 'rocket' | 'superman' | 'dragon';
 }
 
 export interface FacebookLiveStats {
