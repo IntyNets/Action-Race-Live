@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BoostKind,
+  DroneRect,
+  GraphicsQuality,
   LiveStatus,
   MatchPhase,
   MinimapDot,
@@ -23,6 +25,7 @@ import {
   playVipDragonSfx,
   setAudioSettings,
   setCommentatorCaptionListener,
+  setCommentatorSpeakingListener,
   speakCommentator,
 } from '../audio/raceAudio';
 
@@ -165,6 +168,34 @@ export function useRaceEngine() {
   const [feed, setFeed] = useState<ActivityFeedItem[]>([]);
   const [autoBots, setAutoBotsState] = useState<boolean>(true);
   const [droneCamOn, setDroneCamOnState] = useState<boolean>(true);
+  const defaultDroneRect: DroneRect = { x: 63, y: 58, w: 34, h: 22 };
+  const droneRectRef = useRef<DroneRect>(defaultDroneRect);
+  const [droneRect, setDroneRectState] = useState<DroneRect>(() => {
+    try {
+      const saved = localStorage.getItem('droneRect');
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (p && typeof p.x === 'number' && typeof p.y === 'number' && typeof p.w === 'number' && typeof p.h === 'number') {
+          droneRectRef.current = p;
+          return p;
+        }
+      }
+    } catch {}
+    return defaultDroneRect;
+  });
+  const graphicsQualityRef = useRef<GraphicsQuality>('medium');
+  const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => {
+    try {
+      const q = localStorage.getItem('graphicsQuality');
+      if (q === 'low' || q === 'medium' || q === 'high') {
+        graphicsQualityRef.current = q;
+        return q;
+      }
+    } catch {}
+    return 'medium';
+  });
+  const [isMcSpeaking, setIsMcSpeaking] = useState<boolean>(false);
+  const [focusedRacer, setFocusedRacer] = useState<(RacerState & { gapSec: number }) | null>(null);
   const cameraModeRef = useRef<CameraModeOverride>('auto');
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
   const savedUsersRef = useRef<Map<string, UserProfile>>(new Map());
@@ -538,6 +569,8 @@ export function useRaceEngine() {
       raceDuration: raceDurationRef.current,
       autoBots: autoBotsRef.current,
       droneCamOn: droneCamOnRef.current,
+      droneRect: droneRectRef.current,
+      graphicsQuality: graphicsQualityRef.current,
       cameraMode: cameraModeRef.current,
       racers: racersList,
     };
@@ -586,6 +619,29 @@ export function useRaceEngine() {
     if (typeof snap.droneCamOn === 'boolean' && snap.droneCamOn !== droneCamOnRef.current) {
       droneCamOnRef.current = snap.droneCamOn;
       setDroneCamOnState(snap.droneCamOn);
+    }
+    if (
+      snap.droneRect &&
+      typeof snap.droneRect.x === 'number' &&
+      typeof snap.droneRect.y === 'number' &&
+      typeof snap.droneRect.w === 'number' &&
+      typeof snap.droneRect.h === 'number'
+    ) {
+      const dr = snap.droneRect as DroneRect;
+      const cur = droneRectRef.current;
+      if (cur.x !== dr.x || cur.y !== dr.y || cur.w !== dr.w || cur.h !== dr.h) {
+        droneRectRef.current = dr;
+        setDroneRectState(dr);
+      }
+    }
+    if (
+      (snap.graphicsQuality === 'low' ||
+        snap.graphicsQuality === 'medium' ||
+        snap.graphicsQuality === 'high') &&
+      snap.graphicsQuality !== graphicsQualityRef.current
+    ) {
+      graphicsQualityRef.current = snap.graphicsQuality;
+      setGraphicsQualityState(snap.graphicsQuality);
     }
     if (
       typeof snap.cameraMode === 'string' &&
@@ -1172,6 +1228,7 @@ export function useRaceEngine() {
   // Trang Bảng Điều Khiển (/) mặc định im lặng, chỉ Chế Độ Live (/?view=stage) phát tiếng giống npc-action-live
   useEffect(() => {
     setCommentatorCaptionListener((txt) => setCommentatorText(txt));
+    setCommentatorSpeakingListener((speaking) => setIsMcSpeaking(speaking));
     if (!IS_STAGE) {
       setAudioSettings({ bgm: false, sfx: false, tts: false });
     }
@@ -1242,6 +1299,22 @@ export function useRaceEngine() {
         } else if (action === 'setDroneCam' && typeof value === 'boolean') {
           droneCamOnRef.current = value;
           setDroneCamOnState(value);
+        } else if (
+          action === 'setDroneRect' &&
+          value &&
+          typeof value.x === 'number' &&
+          typeof value.y === 'number' &&
+          typeof value.w === 'number' &&
+          typeof value.h === 'number'
+        ) {
+          droneRectRef.current = value as DroneRect;
+          setDroneRectState(value as DroneRect);
+        } else if (
+          action === 'setGraphicsQuality' &&
+          (value === 'low' || value === 'medium' || value === 'high')
+        ) {
+          graphicsQualityRef.current = value;
+          setGraphicsQualityState(value);
         } else if (
           action === 'setCameraMode' &&
           (value === 'auto' ||
@@ -1633,7 +1706,20 @@ export function useRaceEngine() {
         );
         const dirtyCam = cameraDirectorRef.current.consumeHudStateIfDirty();
         if (dirtyCam) setCameraHud(dirtyCam);
-        const activeSpotId = cameraDirectorRef.current.getHudState().spotlightUserId;
+        const camNow = cameraDirectorRef.current.getHudState();
+        const activeSpotId = camNow.spotlightUserId;
+        const focusObj =
+          (camNow.focusedUserId ? racersRef.current.get(camNow.focusedUserId) : undefined) ||
+          list[0];
+        if (focusObj) {
+          const leaderZ = list[0]?.z ?? focusObj.z;
+          const distGap = Math.max(0, leaderZ - focusObj.z);
+          const gapSec =
+            focusObj.rank === 1 ? 0 : Math.round((distGap / Math.max(12, focusObj.speed || 20)) * 10) / 10;
+          setFocusedRacer({ ...focusObj, gapSec });
+        } else {
+          setFocusedRacer(null);
+        }
         // Hiển thị vị trí toàn bộ người chơi (tối đa 40 chấm) trên Mini Race Map
         const dots: MinimapDot[] = list.slice(0, 40).map((r) => {
           const s = sampleCircuit(Math.max(0, r.z), r.x);
@@ -1873,6 +1959,31 @@ export function useRaceEngine() {
     [postControl],
   );
 
+  const changeDroneRect = useCallback(
+    (rect: DroneRect) => {
+      droneRectRef.current = rect;
+      setDroneRectState(rect);
+      try {
+        localStorage.setItem('droneRect', JSON.stringify(rect));
+      } catch {}
+      postControl('setDroneRect', rect);
+    },
+    [postControl],
+  );
+
+  const changeGraphicsQuality = useCallback(
+    (q: GraphicsQuality) => {
+      graphicsQualityRef.current = q;
+      setGraphicsQualityState(q);
+      try {
+        localStorage.setItem('graphicsQuality', q);
+      } catch {}
+      postControl('setGraphicsQuality', q);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
   const changeCameraMode = useCallback(
     (mode: CameraModeOverride) => {
       cameraModeRef.current = mode;
@@ -1939,6 +2050,8 @@ export function useRaceEngine() {
     vipBanner,
     feed,
     commentatorText,
+    isMcSpeaking,
+    focusedRacer,
     speakCustom,
     liveStatus,
     savedUsers,
@@ -1946,6 +2059,10 @@ export function useRaceEngine() {
     setAutoBots: changeAutoBots,
     droneCamOn,
     setDroneCamOn: changeDroneCam,
+    droneRect,
+    setDroneRect: changeDroneRect,
+    graphicsQuality,
+    setGraphicsQuality: changeGraphicsQuality,
     cameraMode,
     setCameraMode: changeCameraMode,
     stepPhysics,

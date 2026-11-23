@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MatchPhase, RACE_CONSTANTS, RacerState } from './raceTypes';
+import { DroneRect, GraphicsQuality, MatchPhase, RACE_CONSTANTS, RacerState } from './raceTypes';
 import {
   CIRCUIT_TRACK,
   MapTheme,
@@ -16,6 +16,10 @@ interface Race3DCanvasProps {
   cameraDirectorRef: React.MutableRefObject<CameraDirector>;
   stepPhysics: (dt: number) => void;
   droneCamOn?: boolean;
+  droneRect?: DroneRect;
+  onDroneRectChange?: (rect: DroneRect) => void;
+  canEditDrone?: boolean;
+  graphicsQuality?: GraphicsQuality;
 }
 
 interface DroneTagInfo {
@@ -93,6 +97,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   cameraDirectorRef,
   stepPhysics,
   droneCamOn = true,
+  droneRect = { x: 63, y: 63, w: 34, h: 22 },
+  onDroneRectChange,
+  canEditDrone = false,
+  graphicsQuality = 'medium',
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const badgeElsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -109,6 +117,52 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   stepPhysicsRef.current = stepPhysics;
   const droneCamOnRef = useRef(droneCamOn);
   droneCamOnRef.current = droneCamOn;
+  const graphicsQualityRef = useRef<GraphicsQuality>(graphicsQuality);
+  graphicsQualityRef.current = graphicsQuality;
+  const droneRectRef = useRef<DroneRect>(droneRect);
+  droneRectRef.current = droneRect;
+
+  // Xử lý kéo thả & thu phóng khung Camera Drone trực tiếp trên Bảng Điều Khiển
+  const startDroneInteract = (e: React.PointerEvent, mode: 'move' | 'resize') => {
+    if (!canEditDrone || !onDroneRectChange || !containerRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cRect = containerRef.current.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const init = { ...droneRectRef.current };
+
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - startX) / Math.max(1, cRect.width)) * 100;
+      const dyPct = ((ev.clientY - startY) / Math.max(1, cRect.height)) * 100;
+      if (mode === 'move') {
+        const nx = Math.max(1, Math.min(99 - init.w, init.x + dxPct));
+        const ny = Math.max(8, Math.min(95 - init.h, init.y + dyPct));
+        onDroneRectChange({
+          x: Math.round(nx * 10) / 10,
+          y: Math.round(ny * 10) / 10,
+          w: init.w,
+          h: init.h,
+        });
+      } else {
+        const nw = Math.max(18, Math.min(72, Math.min(99 - init.x, init.w + dxPct)));
+        const nh = Math.max(14, Math.min(50, Math.min(95 - init.y, init.h + dyPct)));
+        onDroneRectChange({
+          x: init.x,
+          y: init.y,
+          w: Math.round(nw * 10) / 10,
+          h: Math.round(nh * 10) / 10,
+        });
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -137,17 +191,18 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const SkeletonUtils = skelMod;
         const { RoomEnvironment } = roomEnvMod;
 
-        // ---------- Renderer + RoomEnvironment PBR ----------
+        // ---------- Renderer + RoomEnvironment PBR + Đổ Bóng Mềm Chân Thực (PCFSoftShadowMap) ----------
         const renderer = new THREE.WebGLRenderer({
           antialias: true,
           powerPreference: 'high-performance',
         });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));
         renderer.setSize(container.clientWidth || 540, container.clientHeight || 960);
-        renderer.shadowMap.enabled = false;
+        renderer.shadowMap.enabled = graphicsQualityRef.current !== 'low';
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.1;
+        renderer.toneMappingExposure = 1.08;
         container.innerHTML = '';
         container.appendChild(renderer.domElement);
 
@@ -206,13 +261,27 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         );
         scene.add(skyDome);
 
-        // Ánh sáng 3 điểm
-        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x166534, 1.0);
+        // Ánh sáng 3 điểm + Nguồn sáng Mặt Trời đổ bóng thật sắc nét theo nhân vật
+        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x166534, 0.92);
         scene.add(hemiLight);
-        const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.5);
-        sunLight.position.set(60, 95, -45);
+        const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.65);
+        sunLight.position.set(36, 58, -28);
+        sunLight.castShadow = graphicsQualityRef.current !== 'low';
+        sunLight.shadow.mapSize.set(
+          graphicsQualityRef.current === 'high' ? 2048 : 1024,
+          graphicsQualityRef.current === 'high' ? 2048 : 1024,
+        );
+        sunLight.shadow.camera.near = 6;
+        sunLight.shadow.camera.far = 155;
+        sunLight.shadow.camera.left = -46;
+        sunLight.shadow.camera.right = 46;
+        sunLight.shadow.camera.top = 46;
+        sunLight.shadow.camera.bottom = -46;
+        sunLight.shadow.bias = -0.0005;
+        sunLight.shadow.normalBias = 0.04;
         scene.add(sunLight);
-        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.55);
+        scene.add(sunLight.target);
+        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
         rimLight.position.set(-50, 30, 80);
         scene.add(rimLight);
 
@@ -396,12 +465,17 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const barrierGeo = new THREE.BoxGeometry(0.7, 1.05, 3.6);
         const barrierRed = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.4 });
         const barrierWhite = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
-        const trunkGeo = new THREE.BoxGeometry(0.95, 3.5, 0.95);
-        const leafBotGeo = new THREE.BoxGeometry(3.8, 2.5, 3.8);
-        const leafTopGeo = new THREE.BoxGeometry(2.4, 2.2, 2.4);
-        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
-        const leafMatA = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8 });
-        const leafMatB = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.75 });
+        // Cây xanh tự nhiên nhiều tầng tán lá + bụi cây & cụm cỏ 3D chi tiết ven đường
+        const trunkGeo = new THREE.CylinderGeometry(0.28, 0.56, 4.1, 7);
+        const leafBotGeo = new THREE.IcosahedronGeometry(2.05, 1);
+        const leafTopGeo = new THREE.IcosahedronGeometry(1.48, 1);
+        const bushGeo = new THREE.DodecahedronGeometry(1.05, 1);
+        const grassBladeGeo = new THREE.ConeGeometry(0.22, 0.95, 4);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b3a19, roughness: 0.92 });
+        const leafMatA = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.82, flatShading: true });
+        const leafMatB = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.78, flatShading: true });
+        const leafMatC = new THREE.MeshStandardMaterial({ color: 0x4ade80, roughness: 0.75, flatShading: true });
+        const grassBladeMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.85, flatShading: true });
         const standGeo = new THREE.BoxGeometry(6.5, 4.4, 18);
         const standRoofGeo = new THREE.BoxGeometry(7.6, 0.6, 18.6);
         const standMat = new THREE.MeshStandardMaterial({ color: 0x4f46e5, roughness: 0.55 });
@@ -622,6 +696,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           trunkGeo,
           leafBotGeo,
           leafTopGeo,
+          bushGeo,
+          grassBladeGeo,
           standGeo,
           standRoofGeo,
           gatePillarGeo,
@@ -647,7 +723,25 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         ]);
         let trackRoot: any = null;
         let builtTrackVersion = -1;
+        let builtQuality: GraphicsQuality | '' = '';
         let relayoutProps: (() => void) | null = null;
+
+        const applyGraphicsQualitySettings = (q: GraphicsQuality) => {
+          const isLow = q === 'low';
+          const isHigh = q === 'high';
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isHigh ? 1.5 : isLow ? 1.0 : 1.25));
+          renderer.shadowMap.enabled = !isLow;
+          sunLight.castShadow = !isLow;
+          const targetMapSize = isHigh ? 2048 : 1024;
+          if (sunLight.shadow.mapSize.width !== targetMapSize) {
+            sunLight.shadow.mapSize.set(targetMapSize, targetMapSize);
+            if (sunLight.shadow.map) {
+              sunLight.shadow.map.dispose();
+              sunLight.shadow.map = null;
+            }
+          }
+          renderer.shadowMap.needsUpdate = true;
+        };
 
         const buildTrackWorld = () => {
           if (trackRoot) {
@@ -675,18 +769,27 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           );
           cloudAnchor.position.set(cx, 0, cz);
 
-          // Mặt nền toàn khu vực (sàn asphalt đêm ở City, thảm cỏ ở các map ngày)
+          const quality = graphicsQualityRef.current;
+          applyGraphicsQualitySettings(quality);
+          const enableWorldShadows = quality !== 'low';
+
+          // Mặt nền toàn khu vực (nhận bóng đổ chân thực)
           const grassSize = ext + 520;
           grassTex.repeat.set(grassSize / 18, grassSize / 18);
           const grass = new THREE.Mesh(new THREE.PlaneGeometry(grassSize, grassSize), grassMat);
           grass.rotation.x = -Math.PI / 2;
           grass.position.set(cx, -0.08, cz);
+          grass.receiveShadow = enableWorldShadows;
           trackRoot.add(grass);
 
-          // Mặt đường nhựa + lề màu riêng theo từng map
-          trackRoot.add(new THREE.Mesh(buildClosedRibbon(-halfW, halfW, 0.01, 0.055), roadMat));
-          trackRoot.add(new THREE.Mesh(buildClosedRibbon(-halfW - 1.5, -halfW, 0.06, 0.14), curbMat));
-          trackRoot.add(new THREE.Mesh(buildClosedRibbon(halfW, halfW + 1.5, 0.06, 0.14), curbMat));
+          // Mặt đường nhựa + lề màu riêng theo từng map (nhận bóng đổ chân thực của nhân vật, rồng, rocket!)
+          const roadMesh = new THREE.Mesh(buildClosedRibbon(-halfW, halfW, 0.01, 0.055), roadMat);
+          roadMesh.receiveShadow = enableWorldShadows;
+          const curbL = new THREE.Mesh(buildClosedRibbon(-halfW - 1.5, -halfW, 0.06, 0.14), curbMat);
+          const curbR = new THREE.Mesh(buildClosedRibbon(halfW, halfW + 1.5, 0.06, 0.14), curbMat);
+          curbL.receiveShadow = enableWorldShadows;
+          curbR.receiveShadow = enableWorldShadows;
+          trackRoot.add(roadMesh, curbL, curbR);
 
           // Rào chắn 2 bên đường (InstancedMesh)
           const barrierSegs = Math.ceil(total / 4.2);
@@ -776,8 +879,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             return true;
           };
 
-          // 1) Cây xanh (Đèo Uốn Lượn dùng Cây Thông hình nón, các map khác dùng Cây Lá Tán Vuông)
-          const treeMax = map.theme.treeCount;
+          // 1) Cây xanh tự nhiên chi tiết nhiều tầng tán lá + Bụi cây & Cụm cỏ 3D ven đường (tùy chỉnh theo cấu hình Thấp/Trung bình/Cao)
+          const treeScaleFactor = quality === 'high' ? 1.25 : quality === 'low' ? 0.65 : 1.0;
+          const treeMax = Math.max(24, Math.round(map.theme.treeCount * treeScaleFactor));
           const treePositions: Array<{ x: number; z: number; s: number; rot: number }> = [];
           const attempts = treeMax * 4;
           const spreadR = ext * 0.72 + 70;
@@ -786,8 +890,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             const radius = Math.sqrt((i + 0.5) / attempts) * spreadR;
             const tx = cx + Math.cos(angle) * radius;
             const tz = cz + Math.sin(angle) * radius;
-            if (isSafeScenerySpot(tx, tz, halfW + 7.5)) {
-              treePositions.push({ x: tx, z: tz, s: 0.85 + (i % 6) * 0.14, rot: (i % 5) * 0.4 });
+            if (isSafeScenerySpot(tx, tz, halfW + 7.2)) {
+              treePositions.push({ x: tx, z: tz, s: 0.85 + (i % 6) * 0.16, rot: (i % 7) * 0.55 });
             }
           }
           const tCount = Math.max(1, treePositions.length);
@@ -802,20 +906,105 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             leafMatB,
             tCount,
           );
+          // Trên mức Trung bình & Cao: thêm tầng tán lá phụ thứ 3 tạo dáng cây xum xuê chân thực như ảnh tham chiếu
+          const leafSideInst =
+            quality !== 'low'
+              ? new THREE.InstancedMesh(
+                  scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
+                  leafMatC,
+                  tCount * 2,
+                )
+              : null;
+
+          if (quality === 'high') {
+            trunkInst.castShadow = true;
+            leafBotInst.castShadow = true;
+            leafTopInst.castShadow = true;
+          }
+
           treePositions.forEach((tp, idx) => {
             dummy.rotation.set(0, tp.rot, 0);
             dummy.scale.setScalar(tp.s);
-            dummy.position.set(tp.x, 1.75 * tp.s, tp.z);
+            dummy.position.set(tp.x, 1.95 * tp.s, tp.z);
             dummy.updateMatrix();
             trunkInst.setMatrixAt(idx, dummy.matrix);
-            dummy.position.set(tp.x, (scenery === 'mountain' ? 4.3 : 4.1) * tp.s, tp.z);
+
+            dummy.position.set(tp.x, (scenery === 'mountain' ? 4.4 : 4.55) * tp.s, tp.z);
+            dummy.scale.set(tp.s * 1.12, tp.s * 0.96, tp.s * 1.12);
             dummy.updateMatrix();
             leafBotInst.setMatrixAt(idx, dummy.matrix);
-            dummy.position.set(tp.x, (scenery === 'mountain' ? 6.6 : 6.0) * tp.s, tp.z);
+
+            dummy.position.set(
+              tp.x + Math.cos(tp.rot) * 0.45 * tp.s,
+              (scenery === 'mountain' ? 6.6 : 6.1) * tp.s,
+              tp.z + Math.sin(tp.rot) * 0.45 * tp.s,
+            );
+            dummy.scale.setScalar(tp.s * 0.95);
             dummy.updateMatrix();
             leafTopInst.setMatrixAt(idx, dummy.matrix);
+
+            if (leafSideInst) {
+              const a1 = tp.rot + 1.1;
+              const a2 = tp.rot + 3.8;
+              dummy.position.set(
+                tp.x + Math.cos(a1) * 1.35 * tp.s,
+                (scenery === 'mountain' ? 3.2 : 4.15) * tp.s,
+                tp.z + Math.sin(a1) * 1.35 * tp.s,
+              );
+              dummy.scale.setScalar(tp.s * 0.78);
+              dummy.updateMatrix();
+              leafSideInst.setMatrixAt(idx * 2, dummy.matrix);
+
+              dummy.position.set(
+                tp.x + Math.cos(a2) * 1.25 * tp.s,
+                (scenery === 'mountain' ? 5.2 : 4.85) * tp.s,
+                tp.z + Math.sin(a2) * 1.25 * tp.s,
+              );
+              dummy.scale.setScalar(tp.s * 0.72);
+              dummy.updateMatrix();
+              leafSideInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+            }
           });
           trackRoot.add(trunkInst, leafBotInst, leafTopInst);
+          if (leafSideInst) trackRoot.add(leafSideInst);
+
+          // 1B) Bụi cây & Cụm cỏ 3D chi tiết ven 2 bên lề đường (chỉ dựng ở mức Trung bình & Cao để tối ưu FPS)
+          if (quality !== 'low' && scenery !== 'city') {
+            const bushCount = quality === 'high' ? 240 : 110;
+            const grassCount = quality === 'high' ? 840 : 340;
+            const bushInst = new THREE.InstancedMesh(bushGeo, leafMatB, bushCount);
+            const grassInst = new THREE.InstancedMesh(grassBladeGeo, grassBladeMat, grassCount);
+            let bi = 0;
+            for (let b = 0; b < bushCount; b++) {
+              const dist = ((b + 0.3) / bushCount) * total;
+              const side = b % 2 === 0 ? -1 : 1;
+              const lat = side * (halfW + 3.4 + (b % 5) * 1.6);
+              const s = sampleCircuit(dist, lat);
+              const sc = 0.65 + (b % 4) * 0.25;
+              dummy.position.set(s.x, 0.52 * sc, s.z);
+              dummy.rotation.set(0, b * 1.3, 0);
+              dummy.scale.set(sc * 1.25, sc * 0.78, sc * 1.1);
+              dummy.updateMatrix();
+              bushInst.setMatrixAt(bi++, dummy.matrix);
+            }
+            bushInst.count = bi;
+
+            let gi = 0;
+            for (let g = 0; g < grassCount; g++) {
+              const dist = ((g * 0.6180339) % 1) * total;
+              const side = g % 2 === 0 ? -1 : 1;
+              const lat = side * (halfW + 2.2 + ((g * 7) % 18) * 0.95);
+              const s = sampleCircuit(dist, lat);
+              const gs = 0.65 + (g % 5) * 0.18;
+              dummy.position.set(s.x, 0.4 * gs, s.z);
+              dummy.rotation.set(((g % 3) - 1) * 0.18, g * 0.9, (((g + 1) % 3) - 1) * 0.18);
+              dummy.scale.set(gs, gs * (0.9 + (g % 3) * 0.22), gs);
+              dummy.updateMatrix();
+              grassInst.setMatrixAt(gi++, dummy.matrix);
+            }
+            grassInst.count = gi;
+            trackRoot.add(bushInst, grassInst);
+          }
 
           // 2) Công trình & Cảnh vật ĐẶC TRƯNG cho từng bản đồ
           if (scenery === 'park') {
@@ -1018,12 +1207,44 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
         const rebuildTrackIfNeeded = () => {
           const v = getTrackVersion();
-          if (v === builtTrackVersion) return;
+          const q = graphicsQualityRef.current;
+          if (v === builtTrackVersion && q === builtQuality) return;
+          const mapChanged = v !== builtTrackVersion;
           builtTrackVersion = v;
+          builtQuality = q;
           buildTrackWorld();
-          cameraDirectorRef.current.snapCamera();
+          if (mapChanged) {
+            cameraDirectorRef.current.snapCamera();
+          }
         };
         rebuildTrackIfNeeded();
+
+        // ---------- 2B. Hiệu ứng Vệt Gió Siêu Tốc 3D Xung Quanh Khung Cảnh (giống ảnh tham chiếu) ----------
+        scene.add(camera);
+        const windStreaksGroup = new THREE.Group();
+        const windStreakGeo = new THREE.CylinderGeometry(0.025, 0.025, 5.2, 4);
+        windStreakGeo.rotateX(Math.PI / 2);
+        const windStreakMat = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.72,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const windStreaks: Array<{ mesh: any; x: number; y: number; z: number; spd: number }> = [];
+        for (let ws = 0; ws < 30; ws++) {
+          const ang = (ws / 30) * Math.PI * 2 + (ws % 3) * 0.21;
+          const rad = 5.2 + (ws % 5) * 1.45;
+          const wx = Math.cos(ang) * rad * 0.85;
+          const wy = Math.sin(ang) * rad * 1.1 + 1.2;
+          const wz = -6 - (ws % 10) * 3.8;
+          const mesh = new THREE.Mesh(windStreakGeo, windStreakMat);
+          mesh.position.set(wx, wy, wz);
+          windStreaksGroup.add(mesh);
+          windStreaks.push({ mesh, x: wx, y: wy, z: wz, spd: 34 + (ws % 6) * 8 });
+        }
+        windStreaksGroup.visible = false;
+        camera.add(windStreaksGroup);
 
 
         // ---------- 3. Hệ thống Hạt 3D Thật (Lửa, Khói, Tia Sét, Pháo Hoa) ----------
@@ -1645,6 +1866,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           root.add(flashLightningGrp);
 
           root.visible = false;
+          // Bật đổ bóng thật cho nhân vật dự phòng & đạo cụ (Jetpack, Tên Lửa, Rồng Thần)
+          [fallbackGrp, jetpackGrp, rocketGrp, dragonGrp].forEach((grp) => {
+            grp.traverse((ch: any) => {
+              if (ch.isMesh) ch.castShadow = true;
+            });
+          });
           scene.add(root);
 
           return {
@@ -1733,6 +1960,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
             cloned.traverse((child: any) => {
               if (child.isMesh && child.material) {
+                child.castShadow = true;
                 const nameLower = `${child.name || ''}`.toLowerCase();
                 const mb = new THREE.Box3().setFromObject(child);
                 const yCenter = (mb.min.y + mb.max.y) * 0.5;
@@ -1852,6 +2080,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           if (slot.petLoadedIdx !== chosenPet) {
             slot.petModelWrap.clear();
             const petClone = SkeletonUtils.clone(petTemplates[chosenPet]);
+            petClone.traverse((ch: any) => {
+              if (ch.isMesh) ch.castShadow = true;
+            });
             slot.petModelWrap.add(petClone);
             slot.petLoadedIdx = chosenPet;
           }
@@ -2015,6 +2246,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             }
 
             slot.root.visible = true;
+            // Khi bật bóng đổ thật (Trung bình / Cao) thì ẩn chấm bóng tròn giả để thấy rõ bóng nhân vật & rồng sắc nét
+            slot.shadowMesh.visible = graphicsQualityRef.current === 'low';
             const useGlb = i < RACE_CONSTANTS.MAX_GLB_RACERS;
             ensureSlotGlb(slot, useGlb, r.characterIdx);
             ensureSlotPet(slot, r.petIdx);
@@ -2434,10 +2667,37 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 focusBoost === 'join');
             speedLinesRef.current.style.opacity =
               focusBoost === 'dragon' || focusBoost === 'rocket'
-                ? '0.65'
+                ? '0.45'
                 : showLines
-                  ? '0.32'
+                  ? '0.24'
                   : '0';
+          }
+
+          // Hiệu ứng vệt gió siêu tốc 3D bay vút qua khung cảnh xung quanh khi tăng tốc (giống ảnh tham chiếu)
+          const showWind3D =
+            (phase === 'racing' || phase === 'countdown') &&
+            focusBoost !== 'none';
+          windStreaksGroup.visible = showWind3D;
+          if (showWind3D) {
+            const boostMult =
+              focusBoost === 'dragon'
+                ? 2.2
+                : focusBoost === 'rocket'
+                  ? 1.9
+                  : focusBoost === 'jetpack'
+                    ? 1.5
+                    : 1.15;
+            windStreakMat.opacity =
+              focusBoost === 'dragon' || focusBoost === 'rocket' ? 0.78 : 0.52;
+            for (let ws = 0; ws < windStreaks.length; ws++) {
+              const st = windStreaks[ws];
+              st.z += st.spd * boostMult * dt;
+              if (st.z > 2) {
+                st.z = -36 - (ws % 6) * 2.5;
+              }
+              st.mesh.position.set(st.x, st.y, st.z);
+              st.mesh.scale.set(1, 1, boostMult * 0.9);
+            }
           }
 
           if (Math.abs(camera.fov - camPose.fov) > 0.03) {
@@ -2448,6 +2708,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           camera.position.set(camPose.posX, camPose.posY, camPose.posZ);
           camera.lookAt(camPose.lookX, camPose.lookY, camPose.lookZ);
           skyDome.position.copy(camera.position);
+
+          // Di chuyển nguồn sáng Mặt Trời & Shadow Camera bám sát nhân vật đang được quay để đổ bóng thật siêu sắc nét
+          if (sunLight.castShadow) {
+            sunLight.position.set(camPose.lookX + 32, 54, camPose.lookZ - 26);
+            sunLight.target.position.set(camPose.lookX, 0, camPose.lookZ);
+            sunLight.target.updateMatrixWorld();
+          }
 
           const cw = container.clientWidth || 540;
           const ch = container.clientHeight || 960;
@@ -2763,25 +3030,34 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         ))}
       </div>
 
-      {/* Khung Camera Drone Toàn Cảnh (To & Sắc Nét hơn ở Góc phải bên dưới - Picture-in-Picture) */}
+      {/* Khung Camera Drone Toàn Cảnh (Kéo thả di chuyển & thu phóng trực tiếp trên Bảng Điều Khiển, đồng bộ sang Stage) */}
       <div
         ref={dronePipRef}
-        style={{ display: droneCamOn ? 'block' : 'none' }}
-        className="pointer-events-none absolute bottom-[104px] right-2.5 w-[178px] h-[214px] rounded-2xl border-2 border-sky-400/90 shadow-[0_0_28px_rgba(14,165,233,0.55)] overflow-hidden z-20"
+        onPointerDown={(e) => startDroneInteract(e, 'move')}
+        style={{
+          display: droneCamOn ? 'block' : 'none',
+          left: `${droneRect.x}%`,
+          top: `${droneRect.y}%`,
+          width: `${droneRect.w}%`,
+          height: `${droneRect.h}%`,
+        }}
+        className={`${
+          canEditDrone ? 'pointer-events-auto cursor-move' : 'pointer-events-none'
+        } absolute rounded-2xl border-2 border-sky-400/90 shadow-[0_0_28px_rgba(14,165,233,0.55)] overflow-hidden z-20 select-none`}
       >
         {/* Thanh tiêu đề Drone Live */}
         <div className="absolute top-0 left-0 right-0 px-2 py-1 bg-slate-950/85 border-b border-sky-400/50 backdrop-blur-sm flex items-center justify-between">
-          <span className="text-[9.5px] font-black tracking-wide text-sky-300 flex items-center gap-1">
-            🚁 DRONE TOÀN CẢNH
+          <span className="text-[9px] font-black tracking-wide text-sky-300 flex items-center gap-1 truncate">
+            🚁 DRONE {canEditDrone ? '(Kéo để chuyển)' : 'TOÀN CẢNH'}
           </span>
-          <span className="flex items-center gap-0.5 text-[8px] font-black text-rose-400">
+          <span className="flex items-center gap-0.5 text-[8px] font-black text-rose-400 shrink-0">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
             LIVE
           </span>
         </div>
 
         {/* Các thẻ định vị toàn bộ người chơi trên sân đua trong góc quay Drone */}
-        <div className="absolute inset-0 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
           {droneTags.map((t, idx) => (
             <div
               key={t.id}
@@ -2816,10 +3092,21 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         </div>
 
         {/* Chân khung Drone Cam */}
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-slate-950/90 to-transparent flex items-center justify-between text-[8.5px] font-bold text-slate-200">
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-slate-950/90 to-transparent flex items-center justify-between text-[8px] font-bold text-slate-200">
           <span>TOÀN SÂN ĐUA</span>
           <span className="text-amber-300">{droneTags.length} TAY ĐUA</span>
         </div>
+
+        {/* Tay cầm thu phóng ở góc phải bên dưới (chỉ hiện trên Bảng Điều Khiển) */}
+        {canEditDrone && (
+          <div
+            onPointerDown={(e) => startDroneInteract(e, 'resize')}
+            title="Kéo để thu phóng khung Camera Drone"
+            className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize z-30 flex items-end justify-end p-0.5 bg-sky-500/80 rounded-tl-lg border-t border-l border-white/60 hover:bg-amber-400 transition"
+          >
+            <span className="text-[9px] leading-none text-slate-950 font-black">⤡</span>
+          </div>
+        )}
       </div>
 
       {/* Bộ đếm FPS & Trạng thái Model 3D GLB */}

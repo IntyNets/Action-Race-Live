@@ -209,9 +209,31 @@ export function playCrowdCheerSfx() {
 let pendingTtsQueue: Array<{ text: string; hype: boolean; voice: 'm' | 'f' }> = [];
 let casterToggle: 'm' | 'f' = 'm';
 let captionListener: ((text: string) => void) | null = null;
+let speakingListener: ((speaking: boolean) => void) | null = null;
+let speakingDecayTimer = 0;
 
 export function setCommentatorCaptionListener(fn: ((text: string) => void) | null) {
   captionListener = fn;
+}
+
+export function setCommentatorSpeakingListener(fn: ((speaking: boolean) => void) | null) {
+  speakingListener = fn;
+}
+
+function notifyMcSpeaking(speaking: boolean, autoStopMs = 0) {
+  if (speakingDecayTimer) {
+    clearTimeout(speakingDecayTimer);
+    speakingDecayTimer = 0;
+  }
+  speakingListener?.(speaking);
+  if (speaking && autoStopMs > 0) {
+    speakingDecayTimer = window.setTimeout(() => {
+      speakingDecayTimer = 0;
+      if (!activeTtsAudio || activeTtsAudio.paused) {
+        speakingListener?.(false);
+      }
+    }, autoStopMs);
+  }
 }
 
 function playNextInTtsQueue() {
@@ -221,6 +243,7 @@ function playNextInTtsQueue() {
   const next = pendingTtsQueue.shift()!;
   lastTtsAt = Date.now();
   captionListener?.(next.text);
+  notifyMcSpeaking(true, 9000);
 
   try {
     const url = `/api/tts?text=${encodeURIComponent(next.text.slice(0, 280))}&voice=${next.voice}&hype=${next.hype ? '1' : '0'}`;
@@ -231,27 +254,35 @@ function playNextInTtsQueue() {
       activeTtsAudio = null;
       if (pendingTtsQueue.length > 0) {
         setTimeout(playNextInTtsQueue, 180);
+      } else {
+        notifyMcSpeaking(false);
       }
     };
     audio.onerror = () => {
       activeTtsAudio = null;
       if (pendingTtsQueue.length > 0) {
         setTimeout(playNextInTtsQueue, 180);
+      } else {
+        notifyMcSpeaking(false);
       }
     };
     void audio.play().catch(() => {
       activeTtsAudio = null;
+      notifyMcSpeaking(false);
     });
   } catch {
     activeTtsAudio = null;
+    notifyMcSpeaking(false);
   }
 }
 
 export function speakCommentator(text: string, priority = false) {
   const clean = text.trim();
   if (!clean) return;
-  // Luôn cập nhật phụ đề BLV trên màn hình kể cả khi tắt âm thanh trên Dashboard
   captionListener?.(clean);
+  // Ước lượng thời lượng MC đang nói để nhấp nháy sóng âm MC cả trên Preview (khi tắt tiếng) lẫn Stage
+  const estMs = Math.max(2200, Math.min(7500, clean.length * 52));
+  notifyMcSpeaking(true, estMs);
   if (!ttsEnabled) return;
 
   const now = Date.now();

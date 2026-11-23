@@ -42,7 +42,8 @@ export default function App() {
     minimapDots,
     vipBanner,
     feed,
-    commentatorText,
+    isMcSpeaking,
+    focusedRacer,
     speakCustom,
     liveStatus,
     savedUsers,
@@ -62,6 +63,10 @@ export default function App() {
     changeMap,
     droneCamOn,
     setDroneCamOn,
+    droneRect,
+    setDroneRect,
+    graphicsQuality,
+    setGraphicsQuality,
     cameraMode,
     setCameraMode,
   } = engine;
@@ -263,127 +268,26 @@ export default function App() {
         cameraDirectorRef={cameraDirectorRef}
         stepPhysics={stepPhysics}
         droneCamOn={droneCamOn}
+        droneRect={droneRect}
+        onDroneRectChange={setDroneRect}
+        canEditDrone={!IS_STAGE}
+        graphicsQuality={graphicsQuality}
       />
 
-      {/* ==================== TOP HUD (Vùng an toàn TikTok LIVE 9:16) ==================== */}
-      <div className="pointer-events-none absolute top-0 left-0 right-0 z-20 pt-3 px-3 pb-2 flex flex-col gap-1.5 bg-gradient-to-b from-slate-950/75 via-slate-950/25 to-transparent">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="px-2 py-1 rounded-lg bg-slate-950/80 border border-white/15 text-[10px] font-black tracking-wide text-amber-300">
-              VÁN #{matchNo}
-            </span>
-            <span className={`px-2 py-1 rounded-lg text-[10px] font-black shadow ${phaseMeta.badge}`}>
-              {phaseMeta.label} · {timerSec}s
-            </span>
-            <span
-              className={`px-2 py-1 rounded-lg text-[10px] font-black border shadow ${
-                cameraHud.state === 'FRONT_TRACKING'
-                  ? 'bg-amber-400 text-slate-950 border-yellow-100'
-                  : cameraHud.state === 'SIDE_TRACKING'
-                    ? 'bg-cyan-400 text-slate-950 border-cyan-100'
-                    : cameraHud.state === 'OVERVIEW'
-                      ? 'bg-indigo-500 text-white border-indigo-200'
-                      : 'bg-slate-950/80 text-sky-300 border-sky-400/30'
-              }`}
-            >
-              {cameraHud.badgeText}
-            </span>
-          </div>
-
-          <div className="pointer-events-auto flex items-center gap-1.5">
-            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-950/80 border border-white/15 text-[11px] font-bold">
-              <Users className="w-3.5 h-3.5 text-sky-400" />
-              <span>{racerCount}</span>
-            </div>
-            {IS_STAGE && (
-              <button
-                onClick={() => handleAudioToggle('bgm')}
-                title="Bật/Tắt nhạc nền"
-                className="p-1.5 rounded-lg bg-slate-950/80 border border-white/15 hover:bg-slate-800 transition"
-              >
-                {bgmOn ? (
-                  <Volume2 className="w-4 h-4 text-emerald-400" />
-                ) : (
-                  <VolumeX className="w-4 h-4 text-slate-400" />
-                )}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Danh Sách Tay Đua Nhỏ Gọn (Hiển thị đầy đủ bảng xếp hạng) + Mini Race Map */}
-        {phase !== 'podium' && (
-          <div className="flex items-start justify-between gap-2">
-            {top5.length > 0 ? (
-              <div className="pointer-events-auto w-[138px] rounded-lg bg-slate-950/55 border border-white/15 backdrop-blur-md p-1 shadow-lg">
-                <div className="flex items-center justify-between text-[8.5px] font-black uppercase tracking-wider text-amber-300 mb-0.5 px-0.5">
-                  <span className="flex items-center gap-0.5">
-                    <Trophy className="w-2.5 h-2.5" /> DANH SÁCH ({racerCount})
-                  </span>
-                  <span className="text-slate-300">V</span>
-                </div>
-                <div className="flex flex-col gap-[1.5px] max-h-[168px] overflow-y-auto pr-0.5">
-                  {top5.map((r) => (
-                    <div
-                      key={r.id}
-                      className={`flex items-center gap-1 px-1 py-[1px] rounded text-[9px] leading-tight ${
-                        r.rank === 1
-                          ? 'bg-amber-400/25 border border-amber-300/50'
-                          : r.rank === 2
-                            ? 'bg-slate-300/15 border border-slate-300/30'
-                            : r.rank === 3
-                              ? 'bg-orange-400/15 border border-orange-400/30'
-                              : 'bg-white/5'
-                      }`}
-                    >
-                      <span
-                        className={`w-3.5 text-center font-black shrink-0 text-[8.5px] ${
-                          r.rank === 1
-                            ? 'text-amber-300'
-                            : r.rank === 2
-                              ? 'text-slate-200'
-                              : r.rank === 3
-                                ? 'text-orange-300'
-                                : 'text-sky-300'
-                        }`}
-                      >
-                        #{r.rank}
-                      </span>
-                      <img
-                        src={r.avatar}
-                        alt={r.nickname}
-                        className="w-3 h-3 rounded-full object-cover bg-slate-800 shrink-0"
-                      />
-                      <span className="flex-1 truncate font-semibold text-white">
-                        {r.boost === 'dragon'
-                          ? '🐉'
-                          : r.boost === 'rocket'
-                            ? '🚀'
-                            : r.boost === 'jetpack'
-                              ? '🎒'
-                              : r.petName
-                                ? '🐾'
-                                : ''}
-                        {r.nickname}
-                      </span>
-                      <span className="text-[8px] font-mono text-sky-300 shrink-0">
-                        {r.lap}/{totalLaps}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div />
-            )}
-
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              <div className="w-[86px] h-[86px] rounded-xl bg-slate-950/72 border border-white/15 backdrop-blur-md p-1.5 shadow-lg relative">
+      {/* ==================== TOP HUD (Bố cục chuẩn ảnh tham chiếu: Mini Map + Danh sách bên trái, LAP giữa, MC & Trạng thái bên phải) ==================== */}
+      <div className="pointer-events-none absolute top-0 left-0 right-0 z-20 pt-2.5 px-2.5 pb-2 flex flex-col gap-1.5">
+        {/* Hàng trên cùng: Ván / LAP ở giữa + MC đang bình luận & Số người chơi bên phải */}
+        <div className="flex items-start justify-between gap-2">
+          {/* Góc Trái Trên: Mini Map trong suốt không khung nặng + Danh sách tay đua siêu gọn ngay bên dưới */}
+          {phase !== 'podium' ? (
+            <div className="flex flex-col items-start gap-1">
+              {/* Mini Map trong suốt (giống ảnh tham chiếu) */}
+              <div className="w-[96px] h-[70px] relative drop-shadow-[0_2px_6px_rgba(0,0,0,0.85)]">
                 <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible">
                   <path
                     d={minimapPath}
                     fill="none"
-                    stroke="rgba(148,163,184,0.35)"
+                    stroke="rgba(15,23,42,0.75)"
                     strokeWidth="9"
                     strokeLinejoin="round"
                   />
@@ -391,16 +295,16 @@ export default function App() {
                     d={minimapPath}
                     fill="none"
                     stroke="#38bdf8"
-                    strokeWidth="3.5"
+                    strokeWidth="4.2"
                     strokeLinejoin="round"
                   />
                   <circle
                     cx={startDot.x}
                     cy={startDot.y}
-                    r="4.2"
-                    fill="#ef4444"
-                    stroke="#ffffff"
-                    strokeWidth="1.5"
+                    r="4.6"
+                    fill="#f8fafc"
+                    stroke="#0f172a"
+                    strokeWidth="1.6"
                   />
                   {minimapDots.map((d) => (
                     <g key={d.id}>
@@ -408,49 +312,146 @@ export default function App() {
                         <circle
                           cx={d.x}
                           cy={d.y}
-                          r="7.2"
+                          r="7.4"
                           fill="none"
                           stroke="#facc15"
-                          strokeWidth="2"
+                          strokeWidth="2.2"
                         />
                       )}
                       <circle
                         cx={d.x}
                         cy={d.y}
-                        r={d.isTop1 || d.isSpotlight ? 4.4 : 2.5}
+                        r={d.isTop1 || d.isSpotlight ? 4.6 : 2.8}
                         fill={d.isTop1 ? '#facc15' : d.color}
                         stroke={d.isTop1 ? '#0f172a' : '#ffffff'}
-                        strokeWidth={d.isTop1 ? 1.4 : 0.7}
+                        strokeWidth={d.isTop1 ? 1.5 : 0.8}
                       />
                     </g>
                   ))}
                 </svg>
-                <span className="absolute bottom-1 right-1.5 text-[8px] font-black text-sky-300/90">
-                  MAP ({minimapDots.length})
-                </span>
               </div>
-              <div className="px-2 py-0.5 rounded-full bg-slate-950/72 border border-white/15 text-[9.5px] font-bold text-slate-200 backdrop-blur-sm whitespace-nowrap">
-                {activeMap.emoji} {activeMap.name} ·{' '}
-                <span className="text-amber-300">{activeLapKm.toFixed(2)} km/vòng</span>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Thanh Spotlight Truyền Hình khi chưa có VIP Banner đè lên */}
-        {!vipBanner &&
-          cameraHud.spotlightNickname &&
-          (cameraHud.state === 'FRONT_TRACKING' ||
-            cameraHud.state === 'SIDE_TRACKING' ||
-            cameraHud.state === 'CHASE') && (
-            <div className="self-center px-3 py-1 rounded-full bg-slate-950/85 border border-amber-300/70 backdrop-blur-md shadow-lg flex items-center gap-2 text-[11px] font-black">
-              <span className="text-amber-300">{cameraHud.badgeText}</span>
-              <span className="text-white">{cameraHud.spotlightNickname}</span>
-              {cameraHud.spotlightLabel && (
-                <span className="text-sky-300">· {cameraHud.spotlightLabel}</span>
+              {/* Danh sách tay đua siêu gọn xếp dọc ngay dưới Mini Map (phong cách ảnh tham chiếu) */}
+              {top5.length > 0 && (
+                <div className="pointer-events-auto w-[124px] flex flex-col gap-[2px] max-h-[172px] overflow-y-auto pr-0.5">
+                  {top5.map((r) => (
+                    <div
+                      key={r.id}
+                      className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-md backdrop-blur-sm text-[8.5px] leading-tight shadow ${
+                        r.rank === 1
+                          ? 'bg-amber-500/80 text-slate-950 font-black border border-yellow-200/70'
+                          : focusedRacer?.id === r.id
+                            ? 'bg-sky-500/75 text-white font-bold border border-sky-200/70'
+                            : 'bg-slate-950/60 text-white/95 border border-white/10'
+                      }`}
+                    >
+                      <span className="w-3 text-center font-black shrink-0">{r.rank}</span>
+                      <img
+                        src={r.avatar}
+                        alt={r.nickname}
+                        className="w-3 h-3 rounded-full object-cover bg-slate-800 shrink-0 border border-white/50"
+                      />
+                      <span className="flex-1 truncate font-semibold">
+                        {r.boost === 'dragon'
+                          ? '🐉'
+                          : r.boost === 'rocket'
+                            ? '🚀'
+                            : r.boost === 'jetpack'
+                              ? '🎒'
+                              : ''}
+                        {r.nickname}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
+          ) : (
+            <div />
           )}
+
+          {/* Giữa Trên: LAP X/Y nổi bật sạch sẽ (giống ảnh tham chiếu) */}
+          <div className="flex flex-col items-center gap-0.5 pt-0.5">
+            <div className="text-base font-black tracking-wider text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+              {phase === 'lobby'
+                ? `CHỜ ĐUA · ${timerSec}s`
+                : phase === 'podium'
+                  ? `🏆 VÁN #${matchNo}`
+                  : `LAP ${leaderLap}/${totalLaps}`}
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="px-1.5 py-[1px] rounded bg-slate-950/70 border border-white/15 text-[8.5px] font-bold text-amber-300">
+                {activeMap.emoji} {activeLapKm.toFixed(2)}km · {timerSec}s
+              </span>
+            </div>
+          </div>
+
+          {/* Góc Phải Trên: Biểu tượng MC đang bình luận (không hiện chữ gây rối) + Camera + Số người */}
+          <div className="pointer-events-auto flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1">
+              {/* Chỉ báo MC đang bình luận bằng sóng âm (không hiện text dài) */}
+              <div
+                title={isMcSpeaking ? 'MC đang bình luận trực tiếp' : 'MC đang sẵn sàng'}
+                className={`flex items-center gap-1 px-2 py-1 rounded-full border backdrop-blur-md transition-all ${
+                  isMcSpeaking
+                    ? 'bg-amber-400/90 border-yellow-100 text-slate-950 shadow-[0_0_12px_rgba(251,191,36,0.8)]'
+                    : 'bg-slate-950/65 border-white/15 text-slate-300'
+                }`}
+              >
+                <span className="text-[10px]">🎙️</span>
+                <span className="text-[9px] font-black tracking-wide">MC</span>
+                <span className="flex items-end gap-[1.5px] h-2.5">
+                  <span
+                    className={`w-[2px] rounded-full ${
+                      isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
+                    }`}
+                  />
+                  <span
+                    className={`w-[2px] rounded-full ${
+                      isMcSpeaking ? 'h-1.5 bg-slate-950 animate-bounce' : 'h-1.5 bg-slate-500'
+                    }`}
+                  />
+                  <span
+                    className={`w-[2px] rounded-full ${
+                      isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
+                    }`}
+                  />
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1 px-1.5 py-1 rounded-lg bg-slate-950/70 border border-white/15 text-[10px] font-bold">
+                <Users className="w-3 h-3 text-sky-400" />
+                <span>{racerCount}</span>
+              </div>
+              {IS_STAGE && (
+                <button
+                  onClick={() => handleAudioToggle('bgm')}
+                  title="Bật/Tắt nhạc nền"
+                  className="p-1 rounded-lg bg-slate-950/70 border border-white/15 hover:bg-slate-800 transition"
+                >
+                  {bgmOn ? (
+                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                </button>
+              )}
+            </div>
+            <span
+              className={`px-1.5 py-0.5 rounded-md text-[8.5px] font-black border shadow ${
+                cameraHud.state === 'FRONT_TRACKING'
+                  ? 'bg-amber-400/90 text-slate-950 border-yellow-100'
+                  : cameraHud.state === 'SIDE_TRACKING'
+                    ? 'bg-cyan-400/90 text-slate-950 border-cyan-100'
+                    : cameraHud.state === 'OVERVIEW'
+                      ? 'bg-indigo-500/90 text-white border-indigo-200'
+                      : 'bg-slate-950/65 text-sky-300 border-sky-400/30'
+              }`}
+            >
+              {cameraHud.badgeText}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* ==================== THÔNG BÁO QUÀ TẶNG VIP (GỌN KIỂU BROADCAST) ==================== */}
@@ -549,56 +550,106 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================== BOTTOM HUD (Chừa vùng an toàn cho Live UI phía dưới) ==================== */}
+      {/* ==================== BOTTOM HUD (Thẻ nhân vật đang quay giống ảnh tham chiếu + hướng dẫn gọn, không hiện text MC gây rối) ==================== */}
       <div
-        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/95 via-slate-950/55 to-transparent ${
-          IS_STAGE ? 'pb-14' : 'pb-3'
+        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent ${
+          IS_STAGE ? 'pb-12' : 'pb-2.5'
         }`}
       >
-        {/* Các thẻ sự kiện tương tác sôi động (giới hạn chiều rộng để không đè lên Drone Cam to bên phải) */}
-        <div className="flex flex-col gap-1 items-start max-w-[54%]">
-          {feed.slice(0, 2).map((item, idx) => (
-            <div
-              key={item.id}
-              className={`px-2.5 py-1 rounded-full text-[10.5px] font-bold backdrop-blur-md border shadow max-w-full truncate transition-all ${
-                idx === 0 ? 'opacity-100 scale-100' : 'opacity-80 scale-95 origin-left'
-              } ${
-                item.tone === 'dragon'
-                  ? 'bg-amber-500/90 border-yellow-200 text-slate-950 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
-                  : item.tone === 'rocket'
-                    ? 'bg-rose-600/90 border-pink-300 text-white'
-                    : item.tone === 'jetpack'
-                      ? 'bg-sky-600/90 border-sky-200 text-white'
-                      : item.tone === 'sprint'
-                        ? 'bg-cyan-500/85 border-cyan-200 text-slate-950'
-                        : 'bg-slate-950/80 border-white/20 text-slate-100'
-              }`}
-            >
-              {item.text}
-            </div>
-          ))}
-        </div>
-
-        {/* Thanh Bình Luận Viên Thể Thao Trực Tiếp (Live Caster Subtitle Ticker) */}
-        {commentatorText && (
-          <div className="rounded-xl bg-gradient-to-r from-amber-500/20 via-slate-950/85 to-slate-950/85 border border-amber-400/50 backdrop-blur-md px-2.5 py-1.5 shadow-lg flex items-center gap-2">
-            <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-amber-400 text-slate-950 text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-ping" />
-              🎙️ BLV LIVE
-            </span>
-            <span className="text-[10.5px] font-bold text-amber-100 line-clamp-2 leading-snug">
-              {commentatorText}
-            </span>
+        {/* Các thẻ sự kiện tương tác gọn gàng (tối đa 1 dòng nổi bật nhất) */}
+        {feed.length > 0 && (
+          <div className="flex flex-col gap-1 items-start max-w-[60%]">
+            {feed.slice(0, 1).map((item) => (
+              <div
+                key={item.id}
+                className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold backdrop-blur-md border shadow max-w-full truncate ${
+                  item.tone === 'dragon'
+                    ? 'bg-amber-500/90 border-yellow-200 text-slate-950'
+                    : item.tone === 'rocket'
+                      ? 'bg-rose-600/90 border-pink-300 text-white'
+                      : item.tone === 'jetpack'
+                        ? 'bg-sky-600/90 border-sky-200 text-white'
+                        : item.tone === 'sprint'
+                          ? 'bg-cyan-500/85 border-cyan-200 text-slate-950'
+                          : 'bg-slate-950/75 border-white/20 text-slate-100'
+                }`}
+              >
+                {item.text}
+              </div>
+            ))}
           </div>
         )}
 
-        <div className="rounded-xl bg-slate-950/75 border border-white/15 backdrop-blur-md px-2.5 py-1.5 shadow-lg text-center flex flex-col gap-0.5">
-          <div className="text-[10px] font-bold text-slate-200">
-            ➕ Follow kênh + 💬 Nhắn <span className="text-emerald-300 font-black">join</span>: Vào đua · ❤️ Tim: Sprint · 🎒 1-10 xu: Jetpack · 🚀 11-99 xu: Tên lửa
+        {/* Thẻ Thông Tin Nhân Vật Đang Được Camera Quay Tới (Phong cách Broadcast giống ảnh tham chiếu) */}
+        {phase !== 'podium' && focusedRacer && (
+          <div className="self-center w-full max-w-[300px] rounded-xl bg-slate-950/75 border border-white/20 backdrop-blur-md px-2.5 py-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.65)] flex items-center gap-2.5">
+            <img
+              src={focusedRacer.avatar}
+              alt={focusedRacer.nickname}
+              className="w-10 h-10 rounded-full object-cover border-2 border-white/75 bg-slate-800 shrink-0 shadow"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1 text-[11px] font-black text-white truncate">
+                <span className="truncate">{focusedRacer.nickname}</span>
+                {focusedRacer.petName && (
+                  <span className="text-[9px] text-amber-300 shrink-0">{focusedRacer.petName}</span>
+                )}
+              </div>
+              <div className="text-[9px] text-slate-300/90 truncate">
+                @{focusedRacer.username || focusedRacer.id} · Lv.{focusedRacer.level || 1}
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[9.5px] font-bold text-slate-200 flex-wrap">
+                <span className="font-mono text-white">
+                  {Math.round(focusedRacer.speed * 3.6)} KM/H
+                </span>
+                <span className="text-slate-500">|</span>
+                <span>
+                  LAP {focusedRacer.lap}/{totalLaps}
+                </span>
+                <span className="text-slate-500">|</span>
+                <span className={focusedRacer.rank === 1 ? 'text-amber-300' : 'text-slate-300'}>
+                  {focusedRacer.rank === 1 ? 'Dẫn đầu' : `-${focusedRacer.gapSec.toFixed(1)}s`}
+                </span>
+                {focusedRacer.boost !== 'none' && (
+                  <span className="px-1.5 py-[1px] rounded bg-rose-600 text-white text-[8.5px] font-black uppercase tracking-wider shadow">
+                    {focusedRacer.boost === 'dragon'
+                      ? 'RỒNG VIP'
+                      : focusedRacer.boost === 'rocket'
+                        ? 'ROCKET'
+                        : focusedRacer.boost === 'jetpack'
+                          ? 'JETPACK'
+                          : 'NITRO'}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div
+              className={`shrink-0 text-right font-black leading-none italic drop-shadow ${
+                focusedRacer.rank === 1
+                  ? 'text-2xl text-amber-300'
+                  : focusedRacer.rank === 2
+                    ? 'text-2xl text-slate-200'
+                    : focusedRacer.rank === 3
+                      ? 'text-2xl text-sky-300'
+                      : 'text-xl text-cyan-300'
+              }`}
+            >
+              {focusedRacer.rank}
+              <span className="text-[11px] not-italic ml-0.5">
+                {focusedRacer.rank === 1
+                  ? 'st'
+                  : focusedRacer.rank === 2
+                    ? 'nd'
+                    : focusedRacer.rank === 3
+                      ? 'rd'
+                      : 'th'}
+              </span>
+            </div>
           </div>
-          <div className="text-[10px] font-black text-amber-300">
-            ✅ Đã Follow trước chỉ cần nhắn "join" · 👑 Quà = 🎥 Spotlight + 🐾 Pet VIP · 100+ xu = 🐉 Rồng Thần!
-          </div>
+        )}
+
+        <div className="rounded-lg bg-slate-950/65 border border-white/10 backdrop-blur-sm px-2 py-1 text-center text-[9.5px] font-bold text-slate-200">
+          ➕ Follow kênh + 💬 Nhắn <span className="text-emerald-300 font-black">join</span>: Vào đua · ❤️ Tim: Sprint · 🎁 Quà: 🎒/🚀/🐉 + 🐾 Pet VIP
         </div>
       </div>
     </div>
@@ -1264,14 +1315,108 @@ export default function App() {
                 </div>
               </div>
 
-              <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-sky-400/30 text-xs font-semibold cursor-pointer">
-                <span>🚁 Hiển thị Camera Drone toàn cảnh (góc phải bên dưới)</span>
-                <input
-                  type="checkbox"
-                  checked={droneCamOn}
-                  onChange={(e) => setDroneCamOn(e.target.checked)}
-                />
-              </label>
+              {/* Nút điều chỉnh Chất Lượng Đồ Họa (Bóng thật, Cây cối, Cỏ lá) phù hợp cấu hình máy */}
+              <div className="flex flex-col gap-2 bg-slate-950/80 rounded-xl p-3 border border-emerald-400/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-black text-emerald-300">
+                    🎨 Chất Lượng Đồ Họa (Bóng thật · Cây cối · Cỏ lá):
+                  </span>
+                  <span className="text-[10px] text-slate-400">Đồng bộ trực tiếp sang Live</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px] font-black">
+                  {(
+                    [
+                      {
+                        id: 'low',
+                        label: '⚡ Thấp (Nhẹ máy)',
+                        desc: 'Bóng nhẹ · Ít cây · Tối đa FPS',
+                      },
+                      {
+                        id: 'medium',
+                        label: '⚖️ Trung Bình',
+                        desc: 'Bóng nhân vật thật 1024px · Cây & cỏ 3D',
+                      },
+                      {
+                        id: 'high',
+                        label: '✨ Cao (Đẹp nhất)',
+                        desc: 'Bóng thật 2048px · Cây & cỏ dày chi tiết',
+                      },
+                    ] as const
+                  ).map((q) => {
+                    const active = graphicsQuality === q.id;
+                    return (
+                      <button
+                        key={q.id}
+                        type="button"
+                        onClick={() => setGraphicsQuality(q.id)}
+                        className={`rounded-xl p-2 text-left border transition ${
+                          active
+                            ? 'bg-emerald-400 text-slate-950 border-emerald-100 shadow-[0_0_14px_rgba(52,211,153,0.4)]'
+                            : 'bg-slate-900/90 text-slate-200 border-white/10 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div>{q.label}</div>
+                        <div
+                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${
+                            active ? 'text-slate-900' : 'text-slate-400'
+                          }`}
+                        >
+                          {q.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Tùy chọn Camera Drone Toàn Cảnh (Kéo thả & Thu phóng trên Preview bên trái) */}
+              <div className="flex flex-col gap-2 bg-slate-950/70 rounded-xl p-3 border border-sky-400/30 text-xs">
+                <label className="flex items-center justify-between font-semibold cursor-pointer">
+                  <span>🚁 Hiển thị Camera Drone toàn cảnh (Kéo thả & thu phóng trên màn Xem Trước)</span>
+                  <input
+                    type="checkbox"
+                    checked={droneCamOn}
+                    onChange={(e) => setDroneCamOn(e.target.checked)}
+                  />
+                </label>
+                {droneCamOn && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
+                    <span className="text-[10.5px] text-sky-300">
+                      💡 Kéo khung Drone bên trái để di chuyển · Kéo góc <b>⤡</b> để thu phóng
+                    </span>
+                    <div className="flex gap-1 text-[10px] font-black">
+                      <button
+                        type="button"
+                        onClick={() => setDroneRect({ x: droneRect.x, y: droneRect.y, w: 26, h: 17 })}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                      >
+                        Nhỏ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDroneRect({ x: Math.min(droneRect.x, 64), y: droneRect.y, w: 34, h: 22 })}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                      >
+                        Vừa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDroneRect({ x: Math.min(droneRect.x, 52), y: Math.min(droneRect.y, 64), w: 46, h: 29 })}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                      >
+                        To
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDroneRect({ x: 63, y: 58, w: 34, h: 22 })}
+                        className="px-2 py-1 rounded bg-sky-600/80 hover:bg-sky-500 text-white"
+                      >
+                        Reset vị trí
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <label className="flex items-center justify-between bg-slate-950/70 rounded-xl px-3 py-2.5 border border-white/10 text-xs font-semibold cursor-pointer">
                 <span>🤖 Tự động thêm Bot khi ít hơn 10 tay đua</span>

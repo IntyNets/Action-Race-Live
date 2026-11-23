@@ -4,6 +4,19 @@ export type MatchPhase = 'lobby' | 'racing' | 'countdown' | 'podium';
 
 export type BoostKind = 'none' | 'join' | 'chat' | 'sprint' | 'jetpack' | 'rocket' | 'dragon';
 
+export type GraphicsQuality = 'low' | 'medium' | 'high';
+
+export interface DroneRect {
+  /** Phần trăm từ mép trái khung 9:16 (0..80) */
+  x: number;
+  /** Phần trăm từ mép trên khung 9:16 (0..80) */
+  y: number;
+  /** Chiều rộng theo % khung 9:16 (18..68) */
+  w: number;
+  /** Chiều cao theo % khung 9:16 (14..50) */
+  h: number;
+}
+
 export interface UserProfile {
   userId: string;
   username: string;
@@ -39,7 +52,7 @@ export interface RacerState {
   level: number;
   /** Điểm kinh nghiệm / tích lũy của người chơi */
   points: number;
-  /** Số lần vô địch Top 1 */
+  /** Số lần vô địc
   wins: number;
   /** Tổng số trận đã tham gia */
   matches: number;

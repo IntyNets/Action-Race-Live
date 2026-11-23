@@ -99,6 +99,7 @@ export interface CameraHudState {
   state: CameraStateName;
   modeOverride: CameraModeOverride;
   badgeText: string;
+  focusedUserId: string | null;
   spotlightUserId: string | null;
   spotlightNickname: string;
   spotlightLabel: string;
@@ -219,11 +220,11 @@ export class CameraEventQueue {
 // ============================================================================
 export class CameraBoundsController {
   public clampDistance(dist: number): number {
-    return Math.max(5.5, Math.min(34.0, dist));
+    return Math.max(5.5, Math.min(46.0, dist));
   }
 
   public clampHeight(height: number): number {
-    return Math.max(2.6, Math.min(26.0, height));
+    return Math.max(2.6, Math.min(30.0, height));
   }
 
   public clampFov(fov: number): number {
@@ -232,10 +233,9 @@ export class CameraBoundsController {
 
   /**
    * 6. CAMERA PHẢN ỨNG THEO TỐC ĐỘ:
-   * - NORMAL SPEED: FOV ~70°, khoảng cách mặc định (6.8m), không rung.
-   * - BOOST (chat/join/sprint/jetpack): Camera lùi nhẹ (+1.0m), FOV 80–84°, rung rất nhẹ.
-   * - SUPER BOOST (rocket/dragon): Camera lùi thêm (+2.1m), FOV đạt 88–90°, vệt sáng kéo dài.
-   * - SLOW: Camera tiến gần nhẹ (-0.5m), FOV giảm về 66°.
+   * - NORMAL SPEED: FOV ~66°, khoảng cách thoáng thấy trọn nhân vật & cảnh quan.
+   * - BOOST (chat/join/sprint/jetpack): Camera lùi nhẹ, FOV 74–77°.
+   * - ROCKET / DRAGON: Lùi xa hẳn (21m - 28m) + nâng cao + căn nhân vật & rồng nằm ở khoảng 3/4 gần giữa màn hình để phô diễn trọn độ hoành tráng!
    */
   public computeSpeedResponse(racer: RacerState | undefined): {
     fov: number;
@@ -248,18 +248,18 @@ export class CameraBoundsController {
     }
     const boost = racer.boost;
     if (boost === 'dragon') {
-      // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi camera xa + nâng cao để thấy trọn rồng, nhân vật và đường đua
-      return { fov: 83, distOffset: 9.6, heightOffset: 4.5, shakeAmp: 0.02 };
+      // Rồng Thần phóng to 1.85x & sải cánh rộng: lùi xa ~27.5m + cao ~12m để thấy trọn vẹn sải cánh, đuôi lửa, nhân vật & đường đua
+      return { fov: 78, distOffset: 16.8, heightOffset: 6.8, shakeAmp: 0.015 };
     }
     if (boost === 'rocket') {
-      // Tên lửa dài & phun lửa lớn: lùi camera thoáng hơn để không bị sát mặt
-      return { fov: 80, distOffset: 5.8, heightOffset: 2.6, shakeAmp: 0.016 };
+      // Tên lửa siêu tốc: lùi xa ~21.5m + cao ~9.5m để thấy trọn thân tên lửa, ngọn lửa và đường đua phía trước
+      return { fov: 76, distOffset: 10.8, heightOffset: 4.3, shakeAmp: 0.012 };
     }
     if (boost === 'jetpack') {
-      return { fov: 77, distOffset: 3.8, heightOffset: 1.7, shakeAmp: 0.01 };
+      return { fov: 75, distOffset: 4.4, heightOffset: 1.9, shakeAmp: 0.008 };
     }
     if (boost === 'sprint' || boost === 'join' || boost === 'chat') {
-      return { fov: 74, distOffset: 2.4, heightOffset: 0.9, shakeAmp: 0.006 };
+      return { fov: 73, distOffset: 2.6, heightOffset: 0.95, shakeAmp: 0.005 };
     }
     if (racer.speed < 14 && racer.speed > 0.5) {
       // SLOW
@@ -295,13 +295,12 @@ export class CameraCollisionController {
 // 8. CAMERA FOLLOW TARGET HELPER — Ngực & Đầu nhân vật (không bám vào chân)
 // ============================================================================
 function getCharacterFollowLookY(racer: RacerState | undefined): number {
-  if (!racer) return 2.05;
-  if (racer.boost === 'dragon') return 3.45;
-  if (racer.boost === 'rocket') return 2.95;
-  if (racer.boost === 'jetpack') return 2.65;
-  // Nhân vật cao 2.3m - 2.55m -> điểm giữa ngực và đầu nằm ở ~1.95m - 2.1m,
-  // đặt lookY = 2.15m giúp nhân vật nằm hơi dưới tâm màn hình và chiếm 35–45% chiều cao gameplay.
-  return 2.15;
+  if (!racer) return 2.45;
+  // Nâng nhẹ điểm nhìn (lookY) giúp nhân vật & Rồng/Rocket nằm ở vị trí 3/4 gần về giữa khung hình (giống ảnh tham chiếu)
+  if (racer.boost === 'dragon') return 4.35;
+  if (racer.boost === 'rocket') return 3.45;
+  if (racer.boost === 'jetpack') return 3.05;
+  return 2.5;
 }
 
 // ============================================================================
@@ -398,9 +397,9 @@ export class FrontTrackingCameraMode {
 
     const speedResp = bounds.computeSpeedResponse(racer);
     const isBigVehicle = racer.boost === 'dragon' || racer.boost === 'rocket';
-    // Khi cưỡi Rồng Thần / Tên Lửa: mở góc chính diện xéo 3/4 (~140°) + lùi xa để thấy trọn toàn thân rồng/tên lửa, nhân vật & đường đua thoáng đãng
+    // Khi cưỡi Rồng Thần / Tên Lửa: mở góc chính diện xéo 3/4 (~130°) + lùi xa để thấy trọn sải cánh rồng, thân tên lửa, nhân vật & đường đua
     const subtleAngle = isBigVehicle
-      ? Math.PI * 0.78 + Math.sin(tSec * 0.7) * 0.1
+      ? Math.PI * 0.72 + Math.sin(tSec * 0.65) * 0.1
       : Math.PI - Math.sin(tSec * 0.9) * 0.14;
 
     return {
@@ -408,14 +407,14 @@ export class FrontTrackingCameraMode {
       lat: racer.x,
       speed: racer.speed,
       orbitAngle: subtleAngle,
-      radius: bounds.clampDistance(10.8 + speedResp.distOffset * 1.05),
-      height: bounds.clampHeight(5.0 + speedResp.heightOffset * 0.92),
+      radius: bounds.clampDistance(11.0 + speedResp.distOffset * 1.08),
+      height: bounds.clampHeight(5.1 + speedResp.heightOffset * 0.95),
       curveBiasLat: 0,
-      lookAhead: -0.4,
-      lookY: getCharacterFollowLookY(racer) - 0.1,
-      fov: bounds.clampFov(Math.min(83, speedResp.fov)),
+      lookAhead: isBigVehicle ? 0.6 : -0.3,
+      lookY: getCharacterFollowLookY(racer),
+      fov: bounds.clampFov(Math.min(80, speedResp.fov)),
       panSpeed: 8.0,
-      shakeAmp: speedResp.shakeAmp * 0.45,
+      shakeAmp: speedResp.shakeAmp * 0.4,
     };
   }
 }
@@ -682,6 +681,7 @@ export class CameraDirector {
   private state: CameraStateName = 'IDLE';
   private modeOverride: CameraModeOverride = 'auto';
   private activeEvent: CameraEvent | null = null;
+  private lastFocusedUserId: string | null = null;
   private stateRemainingSec = 0;
   private raceStartElapsedSec = 0;
   private hudDirty = true;
@@ -924,6 +924,14 @@ export class CameraDirector {
     // ==========================================================================
     let rawPose: CameraPose;
     const leader = sortedRacers[0];
+    const currentFocusedId =
+      (this.activeEvent?.userId && racersMap.has(this.activeEvent.userId)
+        ? this.activeEvent.userId
+        : leader?.id) || null;
+    if (currentFocusedId !== this.lastFocusedUserId) {
+      this.lastFocusedUserId = currentFocusedId;
+      this.hudDirty = true;
+    }
 
     if (this.state === 'IDLE') {
       // IDLE: Camera đặt phía sau nhân vật tại vạch xuất phát, giữ khung hình ổn định
@@ -1140,6 +1148,7 @@ export class CameraDirector {
       state: this.state,
       modeOverride: this.modeOverride,
       badgeText: labels[this.state],
+      focusedUserId: this.lastFocusedUserId,
       spotlightUserId: this.activeEvent?.userId || null,
       spotlightNickname: this.activeEvent?.nickname || '',
       spotlightLabel: this.activeEvent?.label || '',
