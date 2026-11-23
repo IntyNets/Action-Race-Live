@@ -378,13 +378,33 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           cv.width = 64;
           cv.height = 64;
           const ctx = cv.getContext('2d')!;
-          const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+          // Hào quang đốm sáng mềm (Soft Bokeh)
+          const g = ctx.createRadialGradient(32, 32, 1, 32, 32, 30);
           g.addColorStop(0, 'rgba(255,255,255,1)');
-          g.addColorStop(0.35, 'rgba(255,255,255,0.85)');
-          g.addColorStop(0.75, 'rgba(255,255,255,0.25)');
+          g.addColorStop(0.25, 'rgba(255,255,255,0.92)');
+          g.addColorStop(0.55, 'rgba(255,255,255,0.32)');
           g.addColorStop(1, 'rgba(255,255,255,0)');
           ctx.fillStyle = g;
           ctx.fillRect(0, 0, 64, 64);
+          // Tia sao 4 cánh mảnh tự nhiên (Starburst Sparkle)
+          ctx.save();
+          ctx.translate(32, 32);
+          const drawSpike = (ang: number, len: number, w: number) => {
+            ctx.save();
+            ctx.rotate(ang);
+            const sg = ctx.createLinearGradient(0, -len, 0, len);
+            sg.addColorStop(0, 'rgba(255,255,255,0)');
+            sg.addColorStop(0.5, 'rgba(255,255,255,0.95)');
+            sg.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = sg;
+            ctx.fillRect(-w / 2, -len, w, len * 2);
+            ctx.restore();
+          };
+          drawSpike(0, 29, 2.6);
+          drawSpike(Math.PI / 2, 29, 2.6);
+          drawSpike(Math.PI / 4, 16, 1.5);
+          drawSpike(-Math.PI / 4, 16, 1.5);
+          ctx.restore();
           return new THREE.CanvasTexture(cv);
         };
 
@@ -1560,15 +1580,21 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const geoRocketNozzle = new THREE.CylinderGeometry(0.42, 0.56, 0.48, 12);
         const geoShockRing = new THREE.TorusGeometry(0.95, 0.08, 8, 22);
 
-        const geoDragonHead = new THREE.BoxGeometry(1.1, 0.85, 1.45);
-        const geoDragonSnout = new THREE.BoxGeometry(0.78, 0.48, 0.85);
-        const geoDragonHorn = new THREE.ConeGeometry(0.14, 0.95, 6);
-        const geoDragonEye = new THREE.SphereGeometry(0.14, 8, 8);
-        const geoDragonSeg = new THREE.BoxGeometry(0.88, 0.78, 0.96);
-        const geoDragonSpike = new THREE.ConeGeometry(0.14, 0.46, 5);
-        const geoDragonWingMain = new THREE.BoxGeometry(2.6, 0.12, 1.15);
-        const geoDragonWingTip = new THREE.BoxGeometry(1.65, 0.1, 0.78);
-        const geoDragonOrb = new THREE.SphereGeometry(0.22, 8, 8);
+        // Hình khối Rồng liền khối mượt mà (Rồng Trung Quốc & Rồng Châu Âu)
+        const geoDragonHead = new THREE.SphereGeometry(0.74, 14, 12);
+        const geoDragonSnout = new THREE.CapsuleGeometry(0.32, 0.58, 6, 10);
+        geoDragonSnout.rotateX(Math.PI / 2);
+        const geoDragonHorn = new THREE.ConeGeometry(0.13, 1.05, 8);
+        const geoDragonWhisker = new THREE.CylinderGeometry(0.035, 0.015, 1.65, 6);
+        const geoDragonEye = new THREE.SphereGeometry(0.14, 10, 10);
+        const geoDragonSeg = new THREE.SphereGeometry(0.68, 14, 12);
+        const geoDragonSpike = new THREE.ConeGeometry(0.13, 0.56, 6);
+        const geoDragonWingArm = new THREE.CylinderGeometry(0.11, 0.16, 3.2, 8);
+        geoDragonWingArm.rotateZ(Math.PI / 2);
+        const geoDragonWingMain = new THREE.BoxGeometry(2.85, 0.08, 1.55);
+        const geoDragonWingTip = new THREE.ConeGeometry(0.95, 2.25, 4);
+        geoDragonWingTip.rotateZ(-Math.PI / 2);
+        const geoDragonOrb = new THREE.SphereGeometry(0.24, 12, 10);
         const geoBoltMain = new THREE.BoxGeometry(0.08, 0.08, 1.35);
         const geoBoltDiag = new THREE.BoxGeometry(0.07, 0.07, 0.95);
 
@@ -1608,16 +1634,33 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const matDragonGold = new THREE.MeshStandardMaterial({
           color: 0xfacc15,
           emissive: 0xd97706,
-          emissiveIntensity: 0.45,
-          metalness: 0.75,
-          roughness: 0.22,
+          emissiveIntensity: 0.48,
+          metalness: 0.78,
+          roughness: 0.2,
         });
         const matDragonCrimson = new THREE.MeshStandardMaterial({
           color: 0xdc2626,
           emissive: 0x991b1b,
-          emissiveIntensity: 0.35,
-          metalness: 0.4,
-          roughness: 0.3,
+          emissiveIntensity: 0.42,
+          metalness: 0.55,
+          roughness: 0.24,
+        });
+        const matDragonRoyalBlue = new THREE.MeshStandardMaterial({
+          color: 0x1d4ed8,
+          emissive: 0x1e3a8a,
+          emissiveIntensity: 0.48,
+          metalness: 0.68,
+          roughness: 0.22,
+        });
+        const matDragonWingMembrane = new THREE.MeshStandardMaterial({
+          color: 0xf97316,
+          emissive: 0xc2410c,
+          emissiveIntensity: 0.55,
+          metalness: 0.3,
+          roughness: 0.35,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide,
         });
         const matDragonEye = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
         const matSprintRing = new THREE.MeshBasicMaterial({
@@ -1640,14 +1683,16 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           glbAllMats: any[];
           glbLastColor: number;
           glbOutlineMat: any;
+          glbHaloMat: any;
           supermanAuraGrp: any;
           supermanRings: any[];
-          supermanCone: any;
           landingShockRing: any;
           landingShockMat: any;
           wasSuperman: boolean;
           supermanLandTimer: number;
           landingBurstDone: boolean;
+          dragonWhiskersGrp: any;
+          dragonStyle: 'eastern' | 'western';
           petHolder: any;
           petModelWrap: any;
           petLoadedIdx: number;
@@ -1829,67 +1874,93 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           rocketGrp.visible = false;
           root.add(rocketGrp);
 
-          // 4) Rồng Thần Hoàng Kim 3D
+          // 4) Rồng Thần Liền Khối Mượt Mà (Ngẫu nhiên Rồng Trung Quốc Hoàng Kim hoặc Rồng Châu Âu Hoàng Gia Cánh Lớn)
           const dragonGrp = new THREE.Group();
           dragonGrp.position.set(0, 0.4, 0);
           const dragonHeadGrp = new THREE.Group();
-          dragonHeadGrp.position.set(0, 0.7, 2.6);
+          dragonHeadGrp.position.set(0, 0.95, 2.85);
           const dHead = new THREE.Mesh(geoDragonHead, matDragonGold);
+          dHead.scale.set(0.95, 0.85, 1.25);
           const dSnout = new THREE.Mesh(geoDragonSnout, matDragonGold);
-          dSnout.position.set(0, -0.1, 0.95);
+          dSnout.position.set(0, -0.08, 0.85);
           const dJaw = new THREE.Mesh(geoDragonSnout, matDragonCrimson);
-          dJaw.position.set(0, -0.45, 0.85);
-          dJaw.rotation.x = 0.22;
+          dJaw.position.set(0, -0.36, 0.72);
+          dJaw.scale.set(0.82, 0.65, 0.88);
+          dJaw.rotation.x = 0.2;
           const dEyeL = new THREE.Mesh(geoDragonEye, matDragonEye);
-          dEyeL.position.set(-0.46, 0.14, 0.45);
+          dEyeL.position.set(-0.42, 0.18, 0.52);
           const dEyeR = new THREE.Mesh(geoDragonEye, matDragonEye);
-          dEyeR.position.set(0.46, 0.14, 0.45);
-          const dHornL = new THREE.Mesh(geoDragonHorn, matDragonCrimson);
-          dHornL.position.set(-0.38, 0.72, -0.2);
-          dHornL.rotation.set(-0.55, 0, 0.25);
-          const dHornR = new THREE.Mesh(geoDragonHorn, matDragonCrimson);
-          dHornR.position.set(0.38, 0.72, -0.2);
-          dHornR.rotation.set(-0.55, 0, -0.25);
-          dragonHeadGrp.add(dHead, dSnout, dJaw, dEyeL, dEyeR, dHornL, dHornR);
+          dEyeR.position.set(0.42, 0.18, 0.52);
+          const dHornL = new THREE.Mesh(geoDragonHorn, matDragonGold);
+          dHornL.position.set(-0.34, 0.68, -0.25);
+          dHornL.rotation.set(-0.65, 0, 0.28);
+          const dHornR = new THREE.Mesh(geoDragonHorn, matDragonGold);
+          dHornR.position.set(0.34, 0.68, -0.25);
+          dHornR.rotation.set(-0.65, 0, -0.28);
+          // Râu rồng dài đặc trưng của Rồng Trung Quốc (chỉ hiện khi là Rồng Trung Quốc)
+          const dragonWhiskersGrp = new THREE.Group();
+          const whiskL = new THREE.Mesh(geoDragonWhisker, matDragonGold);
+          whiskL.position.set(-0.68, -0.15, 0.75);
+          whiskL.rotation.set(0.35, 0, 1.15);
+          const whiskR = new THREE.Mesh(geoDragonWhisker, matDragonGold);
+          whiskR.position.set(0.68, -0.15, 0.75);
+          whiskR.rotation.set(0.35, 0, -1.15);
+          dragonWhiskersGrp.add(whiskL, whiskR);
+          dragonHeadGrp.add(dHead, dSnout, dJaw, dEyeL, dEyeR, dHornL, dHornR, dragonWhiskersGrp);
           dragonGrp.add(dragonHeadGrp);
 
+          // Thân rồng liền khối gồm 16 đốt cầu thuôn gối lên nhau sát khít tạo đường cong liền mạch 100%
           const dragonSegs: any[] = [];
-          for (let s = 0; s < 6; s++) {
+          for (let s = 0; s < 16; s++) {
             const sg = new THREE.Group();
-            const scaleS = 1.0 - s * 0.11;
+            const tFrac = s / 15;
+            // Độ dày cơ thể thuôn mượt từ ngực/vai đầy đặn tới chóp đuôi thanh thoát
+            const thickness =
+              s < 3
+                ? 0.92 + s * 0.08
+                : Math.max(0.28, 1.12 * Math.pow(1 - (tFrac - 0.15) * 0.82, 1.1));
             const segMesh = new THREE.Mesh(
               geoDragonSeg,
-              s % 2 === 0 ? matDragonGold : matDragonCrimson,
+              s % 3 === 1 ? matDragonCrimson : matDragonGold,
             );
-            segMesh.scale.setScalar(scaleS);
-            const spike = new THREE.Mesh(geoDragonSpike, matDragonGold);
-            spike.position.y = 0.56 * scaleS;
-            spike.scale.setScalar(scaleS);
-            sg.add(segMesh, spike);
-            sg.position.set(0, 0.3, 1.3 - s * 0.92);
+            segMesh.scale.set(thickness * 0.95, thickness * 0.88, thickness * 1.48);
+            sg.add(segMesh);
+            if (s % 2 === 0 && s < 14) {
+              const spike = new THREE.Mesh(geoDragonSpike, matDragonGold);
+              spike.position.y = 0.68 * thickness;
+              spike.rotation.x = -0.35;
+              spike.scale.setScalar(thickness * 0.85);
+              sg.add(spike);
+            }
+            sg.position.set(0, 0.35, 2.25 - s * 0.44);
             dragonGrp.add(sg);
             dragonSegs.push(sg);
           }
+
+          // Đôi cánh Rồng Châu Âu uy nghi (xương cánh hoàng kim + màng cánh đỏ cam phát sáng)
           const makeDragonWing = (side: -1 | 1) => {
             const pivot = new THREE.Group();
-            pivot.position.set(side * 0.55, 0.65, 0.55);
-            const mainW = new THREE.Mesh(geoDragonWingMain, matDragonGold);
-            mainW.position.set(side * 1.3, 0, 0);
-            const tipW = new THREE.Mesh(geoDragonWingTip, matDragonCrimson);
-            tipW.position.set(side * 3.1, 0.12, -0.18);
-            tipW.rotation.y = side * -0.25;
-            pivot.add(mainW, tipW);
+            pivot.position.set(side * 0.52, 0.72, 0.95);
+            const arm = new THREE.Mesh(geoDragonWingArm, matDragonGold);
+            arm.position.set(side * 1.55, 0.14, 0.25);
+            const mainW = new THREE.Mesh(geoDragonWingMain, matDragonWingMembrane);
+            mainW.position.set(side * 1.45, 0, -0.25);
+            const tipW = new THREE.Mesh(geoDragonWingTip, matDragonWingMembrane);
+            tipW.position.set(side * 3.45, 0.08, -0.35);
+            tipW.rotation.y = side * -0.22;
+            if (side === -1) tipW.scale.x = -1;
+            pivot.add(arm, mainW, tipW);
             dragonGrp.add(pivot);
             return pivot;
           };
           const dragonLeftWing = makeDragonWing(-1);
           const dragonRightWing = makeDragonWing(1);
           const dragonOrbsGrp = new THREE.Group();
-          dragonOrbsGrp.position.set(0, 1.2, 0.2);
+          dragonOrbsGrp.position.set(0, 1.25, 0.4);
           for (let o = 0; o < 4; o++) {
             const ang = (o * Math.PI) / 2;
-            const orb = new THREE.Mesh(geoDragonOrb, matDragonEye);
-            orb.position.set(Math.cos(ang) * 2.1, 0, Math.sin(ang) * 2.1);
+            const orb = new THREE.Mesh(geoDragonOrb, matDragonGold);
+            orb.position.set(Math.cos(ang) * 2.25, 0, Math.sin(ang) * 2.25);
             dragonOrbsGrp.add(orb);
           }
           dragonGrp.add(dragonOrbsGrp);
@@ -1942,26 +2013,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           flashLightningGrp.visible = false;
           root.add(flashLightningGrp);
 
-          // 6) Hiệu ứng Bay Siêu Nhân (Nón sóng xung kích + Vòng năng lượng tỏa quanh người + Hạ cánh siêu nhân, không vẽ áo choàng)
+          // 6) Hiệu ứng Bay Siêu Nhân (Vòng năng lượng tỏa quanh người + Hạ cánh siêu nhân, KHÔNG hình nón, KHÔNG áo choàng)
           const supermanAuraGrp = new THREE.Group();
 
-          const auraConeMat = new THREE.MeshBasicMaterial({
-            color: 0x38bdf8,
-            transparent: true,
-            opacity: 0.24,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-          });
-          const supermanCone = new THREE.Mesh(
-            new THREE.ConeGeometry(1.45, 3.8, 16, 1, true),
-            auraConeMat,
-          );
-          supermanCone.position.set(0, 1.25, 0.15);
-          supermanAuraGrp.add(supermanCone);
-
           const supermanRings: any[] = [];
-          const auraRingColors = [0x38bdf8, 0xfacc15, 0x22d3ee];
+          const auraRingColors = [0x38bdf8, 0xfacc15, 0xe879f9];
           for (let ar = 0; ar < 3; ar++) {
             const rm = new THREE.MeshBasicMaterial({
               color: auraRingColors[ar],
@@ -1970,7 +2026,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               blending: THREE.AdditiveBlending,
               depthWrite: false,
             });
-            const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05 + ar * 0.26, 0.055, 8, 24), rm);
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(1.0 + ar * 0.24, 0.045, 8, 28), rm);
             ring.rotation.x = Math.PI / 2;
             ring.position.set(0, 0.45 + ar * 0.72, 0);
             supermanAuraGrp.add(ring);
@@ -1997,12 +2053,20 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           landingShockRing.visible = false;
           root.add(landingShockRing);
 
-          // Vật liệu viền năng lượng bọc theo đúng hình dáng nhân vật (Inverted-Hull Silhouette Outline)
+          // 2 lớp vật liệu Hào Quang bám theo đúng hình hài nhân vật (Lớp viền sắc nét + Lớp vầng sáng mềm bên ngoài)
           const glbOutlineMat = new THREE.MeshBasicMaterial({
             color: 0x38bdf8,
             side: THREE.BackSide,
             transparent: true,
-            opacity: 0.85,
+            opacity: 0.88,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+          const glbHaloMat = new THREE.MeshBasicMaterial({
+            color: 0xfacc15,
+            side: THREE.BackSide,
+            transparent: true,
+            opacity: 0.34,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
@@ -2030,14 +2094,16 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             glbAllMats: [],
             glbLastColor: -1,
             glbOutlineMat,
+            glbHaloMat,
             supermanAuraGrp,
             supermanRings,
-            supermanCone,
             landingShockRing,
             landingShockMat,
             wasSuperman: false,
             supermanLandTimer: 0,
             landingBurstDone: false,
+            dragonWhiskersGrp,
+            dragonStyle: 'eastern',
             petHolder,
             petModelWrap,
             petLoadedIdx: -1,
@@ -2173,23 +2239,31 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             });
 
             slot.glbHolder.add(cloned);
-            // Tạo lớp vỏ viền năng lượng (Inverted-Hull Silhouette Outline) bám khớp 100% theo hình dáng & xương của nhân vật khi bay Siêu Nhân
+            // Tạo 2 lớp Hào Quang (Lớp viền năng lượng sắc nét + Lớp vầng sáng tỏa mềm bên ngoài) bám khớp 100% theo hình hài nhân vật
             const outlineMeshes: any[] = [];
             cloned.traverse((ch: any) => {
               if (ch.isSkinnedMesh && ch.geometry && ch.skeleton) {
                 const om = new THREE.SkinnedMesh(ch.geometry, slot.glbOutlineMat);
                 om.bind(ch.skeleton, ch.bindMatrix);
-                om.scale.setScalar(1.065);
+                om.scale.setScalar(1.075);
                 om.visible = false;
                 om.frustumCulled = false;
-                if (ch.parent) ch.parent.add(om);
-                outlineMeshes.push(om);
+                const halo = new THREE.SkinnedMesh(ch.geometry, slot.glbHaloMat);
+                halo.bind(ch.skeleton, ch.bindMatrix);
+                halo.scale.setScalar(1.16);
+                halo.visible = false;
+                halo.frustumCulled = false;
+                if (ch.parent) ch.parent.add(om, halo);
+                outlineMeshes.push(om, halo);
               } else if (ch.isMesh && ch.geometry && !ch.isSkinnedMesh) {
                 const om = new THREE.Mesh(ch.geometry, slot.glbOutlineMat);
-                om.scale.setScalar(1.065);
+                om.scale.setScalar(1.075);
                 om.visible = false;
-                ch.add(om);
-                outlineMeshes.push(om);
+                const halo = new THREE.Mesh(ch.geometry, slot.glbHaloMat);
+                halo.scale.setScalar(1.16);
+                halo.visible = false;
+                ch.add(om, halo);
+                outlineMeshes.push(om, halo);
               }
             });
             slot.glbHolder.userData.outlineMeshes = outlineMeshes;
@@ -2569,27 +2643,40 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.shadowMesh.scale.setScalar(1.0);
             }
 
-            // Bật hào quang phát sáng tự nhiên bám theo đúng hình hài nhân vật (khi bay/hạ cánh Siêu Nhân HOẶC khi đang được Camera Spotlight thay cho chùm đèn rọi!)
+            // Bật 2 lớp hào quang phát sáng nổi bật bám theo đúng hình hài nhân vật (khi bay/hạ cánh Siêu Nhân HOẶC khi đang được Camera Spotlight)
             const activeSpotUserId = cameraDirectorRef.current.getHudState().spotlightUserId;
             const isHeroSpotlight = Boolean(activeSpotUserId && activeSpotUserId === r.id);
             const showEnergyRim = isSuperman || isLanding || isHeroSpotlight;
             const outlineMeshes: any[] | undefined = slot.glbHolder.userData.outlineMeshes;
-            const auraColor = isSuperman || isLanding
-              ? Math.sin(tSec * 14 + i) > 0
-                ? 0x38bdf8
-                : 0xfacc15
-              : isDragon
-                ? 0xfacc15
+            // Chuyển sắc hào quang đa màu rực rỡ, sang trọng (Cyan -> Vàng Kim -> Hồng Tím)
+            const phaseColorIdx = Math.floor(tSec * 2.4 + i) % 3;
+            const auraPrimary =
+              isDragon
+                ? 0xfde047
                 : isRocket
                   ? 0xfb7185
-                  : 0x38bdf8;
+                  : phaseColorIdx === 0
+                    ? 0x22d3ee
+                    : phaseColorIdx === 1
+                      ? 0xfacc15
+                      : 0xe879f9;
+            const auraSecondary =
+              isDragon
+                ? 0xf97316
+                : phaseColorIdx === 0
+                  ? 0xfacc15
+                  : phaseColorIdx === 1
+                    ? 0x38bdf8
+                    : 0xf472b6;
             if (outlineMeshes) {
-              slot.glbOutlineMat.color.setHex(auraColor);
+              slot.glbOutlineMat.color.setHex(auraPrimary);
+              slot.glbHaloMat.color.setHex(auraSecondary);
               slot.glbOutlineMat.opacity = isSuperman
-                ? 0.58 + Math.sin(tSec * 14 + i) * 0.16
+                ? 0.85 + Math.sin(tSec * 12 + i) * 0.12
                 : isLanding
-                  ? Math.min(0.68, slot.supermanLandTimer * 1.1)
-                  : 0.42 + Math.sin(tSec * 6 + i) * 0.12;
+                  ? Math.min(0.9, slot.supermanLandTimer * 1.4)
+                  : 0.72 + Math.sin(tSec * 6 + i) * 0.16;
+              slot.glbHaloMat.opacity = isSuperman ? 0.38 : 0.28;
               for (let omIdx = 0; omIdx < outlineMeshes.length; omIdx++) {
                 outlineMeshes[omIdx].visible = showEnergyRim;
               }
@@ -2598,13 +2685,30 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               const mat = slot.glbAllMats[gm];
               if (mat.emissive) {
                 if (showEnergyRim) {
-                  mat.emissive.setHex(auraColor);
-                  mat.emissiveIntensity = isSuperman ? 0.32 : 0.18;
+                  mat.emissive.setHex(auraPrimary);
+                  mat.emissiveIntensity = isSuperman ? 0.42 : 0.28;
                 } else if (mat.emissiveIntensity !== 0) {
                   mat.emissive.setHex(0x000000);
                   mat.emissiveIntensity = 0;
                 }
               }
+            }
+            // Đốm sáng sao & tia lửa tự nhiên bay lơ lửng quanh nhân vật khi phát sáng hào quang
+            if (showEnergyRim && i < 16 && Math.random() < 0.55) {
+              const ang = Math.random() * Math.PI * 2;
+              const rad = 0.7 + Math.random() * 1.1;
+              spawnParticle({
+                x: sample.x + Math.cos(ang) * rad,
+                y: (isSuperman ? 2.2 : 0.6) + Math.random() * 1.8,
+                z: sample.z + Math.sin(ang) * rad,
+                vx: Math.cos(ang) * 1.4 - sample.tx * 2.5,
+                vy: 1.6 + Math.random() * 2.2,
+                vz: Math.sin(ang) * 1.4 - sample.tz * 2.5,
+                life: 0.55 + Math.random() * 0.35,
+                size: 0.55 + Math.random() * 0.45,
+                grow: 0.3,
+                color: Math.random() < 0.5 ? auraPrimary : auraSecondary,
+              });
             }
 
             // Hoạt ảnh chuyển động đồng bộ 6 trạng thái ('idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall')
@@ -2648,10 +2752,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             slot.dragonGrp.visible = isDragon;
             slot.supermanAuraGrp.visible = isSuperman;
 
-            // Hiệu ứng nón sóng xung kích & vòng năng lượng tỏa quanh người khi bay Siêu Nhân
+            // Hiệu ứng vòng năng lượng tỏa quanh người khi bay Siêu Nhân (đã tắt hình nón)
             if (isSuperman) {
-              slot.supermanCone.rotation.y = tSec * 6;
-              slot.supermanCone.scale.setScalar(0.95 + Math.sin(tSec * 18 + i) * 0.12);
               for (let ar = 0; ar < slot.supermanRings.length; ar++) {
                 const ring = slot.supermanRings[ar];
                 const wave = ((tSec * 2.8 + ar * 0.33) % 1);
@@ -2861,16 +2963,46 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             }
 
             if (isDragon) {
-              const flap = Math.sin(tSec * 9.5 + i) * 0.58;
-              slot.dragonLeftWing.rotation.z = flap;
-              slot.dragonRightWing.rotation.z = -flap;
-              slot.dragonHeadGrp.position.y = 0.75 + Math.sin(tSec * 8 + i) * 0.22;
-              slot.dragonOrbsGrp.rotation.y = tSec * 3.8;
+              // Chọn ngẫu nhiên (tất định theo userId) Rồng Trung Quốc Hoàng Kim (thân uốn lượn dài, râu rồng, ngọc rồng)
+              // hoặc Rồng Châu Âu Hoàng Gia (đôi cánh uy nghi đập mạnh, thân liền khối dũng mãnh)
+              let idHash = 0;
+              for (let c = 0; c < r.id.length; c++) idHash = (idHash * 31 + r.id.charCodeAt(c)) | 0;
+              const isEastern = Math.abs(idHash) % 2 === 0;
+              slot.dragonStyle = isEastern ? 'eastern' : 'western';
+              slot.dragonLeftWing.visible = !isEastern;
+              slot.dragonRightWing.visible = !isEastern;
+              slot.dragonWhiskersGrp.visible = isEastern;
+              slot.dragonOrbsGrp.visible = isEastern;
+
+              // Đổi sắc thân rồng tôn phái: Rồng Trung Quốc (Hoàng Kim - Chu Sa) vs Rồng Châu Âu (Xanh Lam Hoàng Gia - Vàng Kim)
               for (let s = 0; s < slot.dragonSegs.length; s++) {
                 const seg = slot.dragonSegs[s];
-                seg.position.x = Math.sin(tSec * 9 - s * 0.75 + i) * (0.28 + s * 0.08);
-                seg.position.y = 0.35 + Math.cos(tSec * 9 - s * 0.75 + i) * 0.22;
+                const bodyMesh = seg.children[0];
+                if (bodyMesh) {
+                  bodyMesh.material = isEastern
+                    ? s % 3 === 1
+                      ? matDragonCrimson
+                      : matDragonGold
+                    : s % 3 === 0
+                      ? matDragonGold
+                      : matDragonRoyalBlue;
+                }
+                const waveAmp = isEastern ? 0.34 + s * 0.055 : 0.14 + s * 0.03;
+                const waveSpd = isEastern ? 8.5 : 6.2;
+                seg.position.x = Math.sin(tSec * waveSpd - s * 0.42 + i) * waveAmp;
+                seg.position.y =
+                  (isEastern ? 0.48 : 0.42) +
+                  Math.cos(tSec * waveSpd - s * 0.42 + i) * (isEastern ? 0.24 : 0.12);
+                seg.position.z = 2.25 - s * (isEastern ? 0.44 : 0.37);
               }
+
+              if (!isEastern) {
+                const flap = Math.sin(tSec * 8.5 + i) * 0.62;
+                slot.dragonLeftWing.rotation.z = flap;
+                slot.dragonRightWing.rotation.z = -flap;
+              }
+              slot.dragonHeadGrp.position.y = 0.95 + Math.sin(tSec * 7.5 + i) * 0.2;
+              slot.dragonOrbsGrp.rotation.y = tSec * 3.2;
               if (i < 20) {
                 spawnParticle({
                   x: sample.x + backX * 2.2 + (Math.random() - 0.5) * 1.8,
@@ -2879,10 +3011,16 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   vx: backX * 10 + (Math.random() - 0.5) * 2.5,
                   vy: 1.2 + Math.random() * 2,
                   vz: backZ * 10 + (Math.random() - 0.5) * 2.5,
-                  life: 0.62,
-                  size: 1.65,
-                  grow: 1.9,
-                  color: Math.random() < 0.65 ? 0xfacc15 : 0xf97316,
+                  life: 0.65,
+                  size: 1.35,
+                  grow: 1.5,
+                  color: isEastern
+                    ? Math.random() < 0.65
+                      ? 0xfde047
+                      : 0xf97316
+                    : Math.random() < 0.6
+                      ? 0x38bdf8
+                      : 0xfacc15,
                 });
                 if (Math.random() < 0.5) {
                   spawnParticle({
@@ -2892,10 +3030,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                     vx: sample.tx * 9 + (Math.random() - 0.5) * 1.5,
                     vy: (Math.random() - 0.5) * 1.0,
                     vz: sample.tz * 9 + (Math.random() - 0.5) * 1.5,
-                    life: 0.3,
-                    size: 1.25,
-                    grow: 1.6,
-                    color: 0xef4444,
+                    life: 0.32,
+                    size: 1.15,
+                    grow: 1.4,
+                    color: isEastern ? 0xef4444 : 0x38bdf8,
                   });
                 }
               }
@@ -2997,21 +3135,40 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const focusRacerNow = spotRacer || allRacers[0];
           const focusBoost = focusRacerNow?.boost || 'none';
 
-          // Ánh đèn mặt đường dịu, hòa quyện tự nhiên theo nhân vật đang tăng tốc
-          if (focusRacerNow && focusBoost !== 'none' && (phase === 'racing' || phase === 'countdown')) {
+          // Ánh sáng hào quang thực từ nhân vật chiếu tỏa ra nền đất & các vật thể lân cận khi đang Spotlight hoặc tăng tốc/bay!
+          const isFocusLit =
+            Boolean(focusRacerNow) &&
+            (phase === 'racing' || phase === 'countdown') &&
+            (focusBoost !== 'none' || isSpotlightActive);
+          if (isFocusLit && focusRacerNow) {
             const fs = sampleCircuit(focusRacerNow.z, focusRacerNow.x);
-            flashRoadLight.position.set(fs.x, 1.8, fs.z);
+            flashRoadLight.position.set(
+              fs.x,
+              focusBoost === 'superman' || focusBoost === 'dragon' ? 2.6 : 1.9,
+              fs.z,
+            );
+            const litPhase = Math.floor(tSec * 2.4) % 3;
             flashRoadLight.color.setHex(
-              focusBoost === 'superman'
-                ? 0x7dd3fc
-                : focusBoost === 'rocket'
-                  ? 0xfda4af
-                  : focusBoost === 'jetpack'
-                    ? 0xfdba74
-                    : 0xfef08a,
+              focusBoost === 'dragon'
+                ? 0xfde047
+                : focusBoost === 'superman'
+                  ? litPhase === 0
+                    ? 0x22d3ee
+                    : litPhase === 1
+                      ? 0xfacc15
+                      : 0xe879f9
+                  : focusBoost === 'rocket'
+                    ? 0xfb7185
+                    : focusBoost === 'jetpack'
+                      ? 0xfdba74
+                      : 0xfef08a,
             );
             flashRoadLight.intensity =
-              focusBoost === 'dragon' || focusBoost === 'superman' ? 4.8 : 3.6;
+              focusBoost === 'dragon' || focusBoost === 'superman'
+                ? 7.2
+                : isSpotlightActive
+                  ? 5.8
+                  : 4.5;
           } else {
             flashRoadLight.intensity = 0;
           }
