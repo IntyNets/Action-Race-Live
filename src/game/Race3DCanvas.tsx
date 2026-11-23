@@ -50,6 +50,7 @@ interface LabelBadgeInfo {
   boost: RacerState['boost'];
   boostLabel: string;
   petName: string;
+  isPodium?: boolean;
 }
 
 const MAX_BADGES = 30;
@@ -619,6 +620,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.25 }),
           );
           box.position.set(x, h / 2, 0);
+          box.castShadow = true;
+          box.receiveShadow = true;
           return box;
         };
         podiumGroup.add(makePodiumBlock(0, 3.4, 0xfacc15));
@@ -3549,7 +3552,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           if (spotRacer && !topForBadges.some((r) => r.id === spotRacer.id)) {
             topForBadges[topForBadges.length - 1] = spotRacer;
           }
-          const nextSig = topForBadges
+          const nextSig = `${phase}|` + topForBadges
             .map((r) => `${r.id}:${r.rank}:${r.lap}:${r.level}:${r.boost}:${r.petName}:${r.nickname}`)
             .join('|');
           if (nextSig !== lastBadgeSig) {
@@ -3565,6 +3568,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 boost: r.boost,
                 boostLabel: r.boostLabel,
                 petName: r.petName,
+                isPodium: phase === 'podium' && r.rank <= 3,
               })),
             );
           }
@@ -3574,9 +3578,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             if (!el) continue;
             const r = topForBadges[i];
             if (phase === 'podium' && r.rank <= 3) {
-              // Đặt Avatar + Tên chỉnh chu ngay trên mặt trước bục trao giải 3D (không che nhân vật!)
+              // Gắn Avatar to đẹp + Tên ngay giữa mặt trước của từng bục trao giải 3D!
               const pod = getPodiumSlotWorld(r.rank);
-              projVec.set(pod.x, Math.max(0.85, pod.y - 0.35), pod.z);
+              projVec.set(
+                pod.x + podiumFrontPt.x * 2.25,
+                pod.y * 0.52,
+                pod.z + podiumFrontPt.z * 2.25,
+              );
             } else if (phase === 'podium') {
               el.style.opacity = '0';
               continue;
@@ -3607,7 +3615,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             const sx = (projVec.x * 0.5 + 0.5) * cw;
             const sy = (-projVec.y * 0.5 + 0.5) * ch;
             el.style.opacity = '1';
-            el.style.transform = `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -100%)`;
+            el.style.transform =
+              phase === 'podium' && r.rank <= 3
+                ? `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -50%)`
+                : `translate3d(${sx.toFixed(1)}px, ${sy.toFixed(1)}px, 0) translate(-50%, -100%)`;
           }
         };
 
@@ -3654,7 +3665,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         className="pointer-events-none absolute inset-0 z-10"
       />
 
-      {/* Thẻ Vị Trí (#Rank) + Tên + Avatar nổi trực tiếp trên đầu mọi người chơi */}
+      {/* Thẻ Vị Trí (#Rank) trên đầu khi đua & Avatar To Đẹp gắn trực tiếp mặt trước 3 bục trao giải khi Podium */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden z-10">
         {badges.map((b, idx) => (
           <div
@@ -3665,70 +3676,98 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             style={{ opacity: 0, willChange: 'transform' }}
             className="absolute left-0 top-0 flex flex-col items-center gap-0.5"
           >
-            <div className="flex items-center gap-1">
-              {b.boost !== 'none' && b.boostLabel && (
-                <span
-                  className={`px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide uppercase whitespace-nowrap ${BOOST_BADGE_STYLE[b.boost]}`}
-                >
-                  {b.boostLabel}
-                </span>
-              )}
-              {b.petName && (
-                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-300/95 text-slate-950 border border-yellow-100 shadow whitespace-nowrap">
-                  🐾 {b.petName}
-                </span>
-              )}
-            </div>
-            <div
-              className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${
-                b.rank === 1
-                  ? 'bg-amber-400/95 border-yellow-100 text-slate-950 scale-105 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
-                  : b.rank === 2
-                    ? 'bg-slate-200/95 border-white text-slate-900'
-                    : b.rank === 3
-                      ? 'bg-orange-400/95 border-orange-200 text-slate-950'
-                      : 'bg-slate-950/80 border-white/30 text-white'
-              }`}
-            >
-              <span
-                className={`px-1.5 py-[1px] rounded-full text-[10px] font-black leading-tight ${
+            {b.isPodium ? (
+              <div
+                className={`flex flex-col items-center rounded-2xl px-2 py-1.5 border-2 backdrop-blur-md shadow-[0_6px_22px_rgba(0,0,0,0.65)] ${
                   b.rank === 1
-                    ? 'bg-slate-950 text-amber-300'
+                    ? 'bg-gradient-to-b from-amber-400/90 to-amber-600/90 border-yellow-100 text-slate-950'
                     : b.rank === 2
-                      ? 'bg-slate-800 text-white'
-                      : b.rank === 3
-                        ? 'bg-slate-950 text-orange-300'
-                        : 'bg-sky-500 text-slate-950'
+                      ? 'bg-gradient-to-b from-slate-200/90 to-slate-400/90 border-white text-slate-950'
+                      : 'bg-gradient-to-b from-orange-400/90 to-amber-700/90 border-orange-200 text-white'
                 }`}
               >
-                #{b.rank}
-              </span>
-              <img
-                src={b.avatar}
-                alt={b.nickname}
-                className="w-4 h-4 rounded-full object-cover border border-white/60 bg-slate-800"
-              />
-              <span className="text-[10px] font-bold max-w-[74px] truncate">{b.nickname}</span>
-              <span
-                className={`px-1 py-[1px] rounded text-[8.5px] font-black ${
-                  b.rank <= 3 ? 'bg-black/20 text-slate-950' : 'bg-black/40 text-amber-300'
-                }`}
-              >
-                V{b.lap}
-              </span>
-            </div>
-            {/* Mũi tên nhỏ chỉ trực tiếp xuống đỉnh đầu nhân vật */}
-            <div
-              className={`w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] -mt-0.5 ${
-                b.rank === 1
-                  ? 'border-t-amber-300'
-                  : b.rank === 2
-                    ? 'border-t-slate-200'
-                    : b.rank === 3
-                      ? 'border-t-orange-400'
-                      : 'border-t-white/70'
-              }`}
-            />
+                <span className="text-[10px] font-black leading-none mb-1">
+                  {b.rank === 1 ? '👑 #1' : b.rank === 2 ? '🥈 #2' : '🥉 #3'}
+                </span>
+                <img
+                  src={b.avatar}
+                  alt={b.nickname}
+                  className={`rounded-full object-cover border-2 border-white shadow-lg bg-slate-800 ${
+                    b.rank === 1 ? 'w-14 h-14' : 'w-11 h-11'
+                  }`}
+                />
+                <span className="mt-1 text-[10px] font-black max-w-[78px] truncate leading-tight">
+                  {b.nickname}
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-1">
+                  {b.boost !== 'none' && b.boostLabel && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide uppercase whitespace-nowrap ${BOOST_BADGE_STYLE[b.boost]}`}
+                    >
+                      {b.boostLabel}
+                    </span>
+                  )}
+                  {b.petName && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-300/95 text-slate-950 border border-yellow-100 shadow whitespace-nowrap">
+                      🐾 {b.petName}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${
+                    b.rank === 1
+                      ? 'bg-amber-400/95 border-yellow-100 text-slate-950 scale-105 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
+                      : b.rank === 2
+                        ? 'bg-slate-200/95 border-white text-slate-900'
+                        : b.rank === 3
+                          ? 'bg-orange-400/95 border-orange-200 text-slate-950'
+                          : 'bg-slate-950/80 border-white/30 text-white'
+                  }`}
+                >
+                  <span
+                    className={`px-1.5 py-[1px] rounded-full text-[10px] font-black leading-tight ${
+                      b.rank === 1
+                        ? 'bg-slate-950 text-amber-300'
+                        : b.rank === 2
+                          ? 'bg-slate-800 text-white'
+                          : b.rank === 3
+                            ? 'bg-slate-950 text-orange-300'
+                            : 'bg-sky-500 text-slate-950'
+                    }`}
+                  >
+                    #{b.rank}
+                  </span>
+                  <img
+                    src={b.avatar}
+                    alt={b.nickname}
+                    className="w-4 h-4 rounded-full object-cover border border-white/60 bg-slate-800"
+                  />
+                  <span className="text-[10px] font-bold max-w-[74px] truncate">{b.nickname}</span>
+                  <span
+                    className={`px-1 py-[1px] rounded text-[8.5px] font-black ${
+                      b.rank <= 3 ? 'bg-black/20 text-slate-950' : 'bg-black/40 text-amber-300'
+                    }`}
+                  >
+                    V{b.lap}
+                  </span>
+                </div>
+                {/* Mũi tên nhỏ chỉ trực tiếp xuống đỉnh đầu nhân vật */}
+                <div
+                  className={`w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] -mt-0.5 ${
+                    b.rank === 1
+                      ? 'border-t-amber-300'
+                      : b.rank === 2
+                        ? 'border-t-slate-200'
+                        : b.rank === 3
+                          ? 'border-t-orange-400'
+                          : 'border-t-white/70'
+                  }`}
+                />
+              </>
+            )}
           </div>
         ))}
       </div>

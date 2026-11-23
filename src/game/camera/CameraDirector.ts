@@ -601,16 +601,17 @@ export class FinishCamera {
     podiumRightDir: { x: number; z: number },
     tSec: number,
   ): CameraPose {
-    const sway = Math.sin(tSec * 0.52) * 4.2;
+    // Lùi xa 26m (FOV 60°) để khung hình dọc 9:16 thu trọn CẢ 3 BỤC GIẢI (#2, #1, #3) cùng 3 nhân vật ăn mừng!
+    const sway = Math.sin(tSec * 0.45) * 1.8;
     return {
-      posX: podiumCenter.x + podiumFrontDir.x * 14.5 + podiumRightDir.x * sway,
-      posY: 5.8,
-      posZ: podiumCenter.z + podiumFrontDir.z * 14.5 + podiumRightDir.z * sway,
+      posX: podiumCenter.x + podiumFrontDir.x * 26.0 + podiumRightDir.x * sway,
+      posY: 6.8,
+      posZ: podiumCenter.z + podiumFrontDir.z * 26.0 + podiumRightDir.z * sway,
       lookX: podiumCenter.x,
-      lookY: 3.7,
+      lookY: 3.1,
       lookZ: podiumCenter.z,
-      fov: 52,
-      transitionSpeed: 3.8,
+      fov: 60,
+      transitionSpeed: 4.2,
     };
   }
 }

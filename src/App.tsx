@@ -499,13 +499,61 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================== THANH TIÊU ĐỀ VINH DANH GỌN (Avatar & Tên hiển thị trực tiếp trên bục 3D, không che nhân vật!) ==================== */}
+      {/* ==================== BẢNG THÀNH TÍCH TOP 3 NHỎ GỌN (Đặt cao sát mép trên để KHÔNG che bối cảnh & 3 nhân vật trên bục!) ==================== */}
       {phase === 'podium' && podiumTop3.length > 0 && (
-        <div className="pointer-events-none absolute top-14 left-3 right-3 z-30 flex justify-center">
-          <div className="px-4 py-1.5 rounded-full bg-slate-950/75 border border-amber-300/70 backdrop-blur-md shadow-xl flex items-center gap-2 text-[11px] font-black">
-            <span className="text-amber-300">🏆 VINH DANH VÁN #{matchNo}</span>
-            <span className="text-slate-400">·</span>
-            <span className="text-sky-300">Ván mới sau {timerSec}s</span>
+        <div className="pointer-events-none absolute top-14 left-2.5 right-2.5 z-30 flex justify-center">
+          <div className="w-full max-w-[300px] rounded-xl bg-slate-950/70 border border-amber-300/60 backdrop-blur-md px-2 py-1.5 shadow-xl">
+            <div className="flex items-center justify-between text-[9px] font-black tracking-wide mb-1">
+              <span className="text-amber-300">🏆 BẢNG THÀNH TÍCH VÁN #{matchNo}</span>
+              <span className="text-sky-300">Ván mới: {timerSec}s</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {[podiumTop3[1], podiumTop3[0], podiumTop3[2]].map((w, colIdx) => {
+                if (!w) return <div key={colIdx} />;
+                const isFirst = w.rank === 1;
+                const isSecond = w.rank === 2;
+                return (
+                  <div
+                    key={w.id}
+                    className={`flex items-center gap-1 px-1.5 py-1 rounded-lg border ${
+                      isFirst
+                        ? 'bg-amber-400/25 border-amber-300/70'
+                        : isSecond
+                          ? 'bg-slate-200/15 border-slate-300/40'
+                          : 'bg-orange-500/15 border-orange-400/40'
+                    }`}
+                  >
+                    <img
+                      src={w.avatar}
+                      alt={w.nickname}
+                      className={`w-5 h-5 rounded-full object-cover border shrink-0 ${
+                        isFirst
+                          ? 'border-amber-300'
+                          : isSecond
+                            ? 'border-slate-200'
+                            : 'border-orange-300'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1 leading-tight">
+                      <div
+                        className={`text-[8px] font-black ${
+                          isFirst
+                            ? 'text-amber-300'
+                            : isSecond
+                              ? 'text-slate-200'
+                              : 'text-orange-300'
+                        }`}
+                      >
+                        {isFirst ? '👑 #1' : isSecond ? '🥈 #2' : '🥉 #3'}
+                      </div>
+                      <div className="text-[8.5px] font-bold text-white truncate">
+                        {w.nickname}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
