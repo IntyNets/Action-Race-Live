@@ -70,6 +70,8 @@ export default function App() {
     setGraphicsQuality,
     cameraMode,
     setCameraMode,
+    aiCameraModes,
+    toggleAiCameraMode,
   } = engine;
 
   const [platformTab, setPlatformTab] = useState<'tiktok' | 'facebook'>(() => {
@@ -1225,7 +1227,7 @@ export default function App() {
                       {
                         id: 'auto',
                         label: '🎬 Tự Động',
-                        desc: 'Đạo diễn AI (Chase + Front + Side)',
+                        desc: 'Đạo diễn AI (Kết hợp các Mode đã chọn)',
                       },
                       {
                         id: 'chase',
@@ -1273,6 +1275,47 @@ export default function App() {
                     );
                   })}
                 </div>
+
+                {/* Cài đặt lựa chọn các Mode Camera được phép tham gia vào chế độ Đạo Diễn AI */}
+                {cameraMode === 'auto' && (
+                  <div className="mt-1 pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-[10.5px]">
+                      <span className="font-bold text-amber-200">
+                        🤖 Chọn các góc máy tham gia Đạo Diễn AI (tự luân phiên & theo sự kiện):
+                      </span>
+                      <span className="text-[10px] text-slate-400">Giữ ít nhất 1 góc</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10.5px] font-bold">
+                      {(
+                        [
+                          { key: 'chase', label: '🏃 Chase (Phía sau)' },
+                          { key: 'front', label: '🤳 Front (Chính diện)' },
+                          { key: 'side', label: '🏎️ Side (Góc ngang)' },
+                          { key: 'overview', label: '🚁 Overview (Toàn cảnh)' },
+                        ] as const
+                      ).map((opt) => {
+                        const checked = aiCameraModes[opt.key];
+                        return (
+                          <label
+                            key={opt.key}
+                            className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border cursor-pointer transition ${
+                              checked
+                                ? 'bg-amber-400/20 border-amber-300/70 text-amber-100'
+                                : 'bg-slate-900/70 border-white/10 text-slate-400 hover:bg-slate-800'
+                            }`}
+                          >
+                            <span className="truncate">{opt.label}</span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleAiCameraMode(opt.key)}
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Nút điều chỉnh Chất Lượng Đồ Họa (Bóng thật, Cây cối, Cỏ lá) phù hợp cấu hình máy */}

@@ -14,7 +14,12 @@ import {
 } from './raceTypes';
 import { getActiveMapId, sampleCircuit, setActiveMap, worldToMinimap } from './trackCurve';
 import { resolveAvatarColor } from './avatarColor';
-import { CameraDirector, CameraHudState, CameraModeOverride } from './camera/CameraDirector';
+import {
+  AiDirectorModes,
+  CameraDirector,
+  CameraHudState,
+  CameraModeOverride,
+} from './camera/CameraDirector';
 import {
   playCountdownBeep,
   playCrowdCheerSfx,
@@ -203,6 +208,27 @@ export function useRaceEngine() {
   const [focusedRacer, setFocusedRacer] = useState<(RacerState & { gapSec: number }) | null>(null);
   const cameraModeRef = useRef<CameraModeOverride>('auto');
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
+  const defaultAiModes: AiDirectorModes = {
+    chase: true,
+    front: true,
+    side: true,
+    overview: true,
+  };
+  const aiCameraModesRef = useRef<AiDirectorModes>(defaultAiModes);
+  const [aiCameraModes, setAiCameraModesState] = useState<AiDirectorModes>(() => {
+    try {
+      const saved = localStorage.getItem('aiCameraModes');
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (p && typeof p.chase === 'boolean') {
+          aiCameraModesRef.current = p;
+          cameraDirectorRef.current.setAiModes(p);
+          return p;
+        }
+      }
+    } catch {}
+    return defaultAiModes;
+  });
   const savedUsersRef = useRef<Map<string, UserProfile>>(new Map());
   const [savedUsers, setSavedUsers] = useState<UserProfile[]>([]);
   const followersRef = useRef<Set<string>>(new Set());
@@ -605,6 +631,7 @@ export function useRaceEngine() {
       droneRect: droneRectRef.current,
       graphicsQuality: graphicsQualityRef.current,
       cameraMode: cameraModeRef.current,
+      aiCameraModes: aiCameraModesRef.current,
       racers: racersList,
       spectators: Array.from(spectatorsRef.current.values()),
     };
@@ -689,6 +716,20 @@ export function useRaceEngine() {
       cameraModeRef.current = snap.cameraMode;
       setCameraModeState(snap.cameraMode);
       cameraDirectorRef.current.setModeOverride(snap.cameraMode);
+    }
+    if (snap.aiCameraModes && typeof snap.aiCameraModes.chase === 'boolean') {
+      const m = snap.aiCameraModes as AiDirectorModes;
+      const cur = aiCameraModesRef.current;
+      if (
+        cur.chase !== m.chase ||
+        cur.front !== m.front ||
+        cur.side !== m.side ||
+        cur.overview !== m.overview
+      ) {
+        aiCameraModesRef.current = m;
+        setAiCameraModesState(m);
+        cameraDirectorRef.current.setAiModes(m);
+      }
     }
     if (typeof snap.timer === 'number') {
       timerRef.current = snap.timer;
@@ -1432,6 +1473,12 @@ export function useRaceEngine() {
           setCameraModeState(value);
           cameraDirectorRef.current.setModeOverride(value);
           setCameraHud(cameraDirectorRef.current.getHudState());
+        } else if (action === 'setAiCameraModes' && value && typeof value.chase === 'boolean') {
+          const nextModes = value as AiDirectorModes;
+          aiCameraModesRef.current = nextModes;
+          setAiCameraModesState(nextModes);
+          cameraDirectorRef.current.setAiModes(nextModes);
+          setCameraHud(cameraDirectorRef.current.getHudState());
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -2111,6 +2158,25 @@ export function useRaceEngine() {
     [postControl, pushRaceSync],
   );
 
+  const toggleAiCameraMode = useCallback(
+    (key: keyof AiDirectorModes) => {
+      const cur = aiCameraModesRef.current;
+      const next: AiDirectorModes = { ...cur, [key]: !cur[key] };
+      // Luôn giữ ít nhất 1 chế độ camera tham gia Đạo diễn AI
+      if (!next.chase && !next.front && !next.side && !next.overview) return;
+      aiCameraModesRef.current = next;
+      setAiCameraModesState(next);
+      cameraDirectorRef.current.setAiModes(next);
+      setCameraHud(cameraDirectorRef.current.getHudState());
+      try {
+        localStorage.setItem('aiCameraModes', JSON.stringify(next));
+      } catch {}
+      postControl('setAiCameraModes', next);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
   const changeMap = useCallback(
     (id: string) => {
       requestMap(id);
@@ -2181,6 +2247,8 @@ export function useRaceEngine() {
     setGraphicsQuality: changeGraphicsQuality,
     cameraMode,
     setCameraMode: changeCameraMode,
+    aiCameraModes,
+    toggleAiCameraMode,
     stepPhysics,
     connectTikTok,
     disconnectTikTok,

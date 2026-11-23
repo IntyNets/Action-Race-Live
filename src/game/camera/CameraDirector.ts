@@ -19,6 +19,13 @@ export type CameraStateName =
 // Chế độ Camera Đạo Diễn: Tự động (Auto) hoặc Chủ phòng chọn cố định 1 trong 4 Mode A/B/C/D
 export type CameraModeOverride = 'auto' | 'chase' | 'front' | 'side' | 'overview';
 
+export interface AiDirectorModes {
+  chase: boolean;
+  front: boolean;
+  side: boolean;
+  overview: boolean;
+}
+
 // ============================================================================
 // 7. CAMERA PHẢN ỨNG THEO SỰ KIỆN GAME (Event Priority + Transition Lock)
 // ============================================================================
@@ -684,6 +691,14 @@ export class CameraDirector {
 
   private state: CameraStateName = 'IDLE';
   private modeOverride: CameraModeOverride = 'auto';
+  private aiModes: AiDirectorModes = {
+    chase: true,
+    front: true,
+    side: true,
+    overview: true,
+  };
+  private aiCycleTimerSec = 7.5;
+  private aiCycleIdx = 0;
   private activeEvent: CameraEvent | null = null;
   private lastFocusedUserId: string | null = null;
   private stateRemainingSec = 0;
@@ -740,6 +755,32 @@ export class CameraDirector {
 
   public getModeOverride(): CameraModeOverride {
     return this.modeOverride;
+  }
+
+  public setAiModes(modes: AiDirectorModes) {
+    // Bảo đảm luôn có ít nhất 1 chế độ tham gia Đạo diễn AI
+    const anyOn = modes.chase || modes.front || modes.side || modes.overview;
+    this.aiModes = anyOn ? { ...modes } : { chase: true, front: false, side: false, overview: false };
+    this.hudDirty = true;
+  }
+
+  public getAiModes(): AiDirectorModes {
+    return { ...this.aiModes };
+  }
+
+  private getEnabledAiStates(): CameraStateName[] {
+    const list: CameraStateName[] = [];
+    if (this.aiModes.chase) list.push('CHASE');
+    if (this.aiModes.side) list.push('SIDE_TRACKING');
+    if (this.aiModes.front) list.push('FRONT_TRACKING');
+    if (this.aiModes.overview) list.push('OVERVIEW');
+    return list.length > 0 ? list : ['CHASE'];
+  }
+
+  private pickPreferredAiState(preferred: CameraStateName): CameraStateName {
+    const enabled = this.getEnabledAiStates();
+    if (enabled.includes(preferred)) return preferred;
+    return enabled[0];
   }
 
   /** Đặt camera ngay lập tức vào vị trí đích (dùng khi đổi map, tránh lướt xa) */
@@ -862,22 +903,37 @@ export class CameraDirector {
           this.hudDirty = true;
         }
       } else {
-        // Chế độ Tự Động Đạo Diễn (Auto Director):
+        // Chế độ Tự Động Đạo Diễn AI: kết hợp luân phiên TẤT CẢ các Mode đã chọn (Chase / Front / Side / Overview) + phản ứng sự kiện!
+        const enabledStates = this.getEnabledAiStates();
+
         if (
           this.state === 'IDLE' ||
           this.state === 'COUNTDOWN' ||
           this.state === 'RESULT' ||
           this.state === 'FINISH'
         ) {
-          this.state = this.raceStartElapsedSec < 1.8 ? 'RACE_START' : 'CHASE';
+          this.state = this.raceStartElapsedSec < 1.6 ? 'RACE_START' : enabledStates[0];
           this.activeEvent = null;
+          this.aiCycleTimerSec = 7.5;
+          this.aiCycleIdx = 0;
           this.hudDirty = true;
-        } else if (this.state === 'RACE_START' && this.raceStartElapsedSec >= 1.8) {
-          this.state = 'CHASE';
+        } else if (this.state === 'RACE_START' && this.raceStartElapsedSec >= 1.6) {
+          this.state = enabledStates[0];
+          this.aiCycleTimerSec = 7.5;
           this.hudDirty = true;
         }
 
-        // Hết thời lượng sự kiện cinematic (Front Tracking / Side Tracking / Spotlight) -> blend mượt về CHASE
+        // Nếu chủ phòng vừa tắt Mode mà AI đang quay -> chuyển mượt ngay sang Mode kế tiếp đang bật
+        if (
+          this.state !== 'RACE_START' &&
+          !enabledStates.includes(this.state)
+        ) {
+          this.state = enabledStates[0];
+          this.aiCycleTimerSec = 6.5;
+          this.hudDirty = true;
+        }
+
+        // Hết thời lượng sự kiện cinematic -> quay về nhịp luân phiên của Đạo Diễn AI
         if (
           this.activeEvent &&
           (this.state === 'FRONT_TRACKING' ||
@@ -889,10 +945,26 @@ export class CameraDirector {
           const targetAlive =
             !this.activeEvent.userId || racersMap.has(this.activeEvent.userId);
           if (this.stateRemainingSec <= 0 || !targetAlive) {
-            this.state = 'CHASE';
+            this.state = this.pickPreferredAiState('CHASE');
             this.activeEvent = null;
-            this.breatherSec = 1.1; // Transition lock ngăn sự kiện liên tục gây giật camera
+            this.breatherSec = 1.1;
+            this.aiCycleTimerSec = 6.5;
             this.hudDirty = true;
+          }
+        }
+
+        // Luân phiên tự động mượt mà giữa tất cả các Mode được bật trong Đạo Diễn AI khi không có sự kiện Spotlight
+        if (!this.activeEvent && this.state !== 'RACE_START' && enabledStates.length > 1) {
+          this.aiCycleTimerSec -= dt;
+          if (this.aiCycleTimerSec <= 0) {
+            this.aiCycleIdx = (this.aiCycleIdx + 1) % enabledStates.length;
+            const nextAiState = enabledStates[this.aiCycleIdx];
+            if (nextAiState !== this.state) {
+              this.state = nextAiState;
+              this.hudDirty = true;
+            }
+            // Chase giữ lâu hơn một chút (~8s), các góc điện ảnh Front/Side/Overview ~5.2s
+            this.aiCycleTimerSec = nextAiState === 'CHASE' ? 8.0 : 5.2;
           }
         }
 
@@ -923,18 +995,16 @@ export class CameraDirector {
             nextEvt.type === 'NORMAL_GIFT_BOOST' ||
             nextEvt.type === 'PLAYER_JOIN'
           ) {
-            // Quà tặng / Người chơi mới join -> chuyển sang góc Chính Diện (FRONT_TRACKING) khoe toàn thân nhân vật, mặt, thú cưng & hiệu ứng!
-            this.state = 'FRONT_TRACKING';
+            this.state = this.pickPreferredAiState('FRONT_TRACKING');
           } else if (
             nextEvt.type === 'OVERTAKE_EVENT' ||
             nextEvt.type === 'PLAYER_OVERTAKE'
           ) {
-            // Cuộc cạnh tranh vượt mặt -> chuyển sang góc Ngang (SIDE_TRACKING) quan sát 2 nhân vật đua song song!
-            this.state = 'SIDE_TRACKING';
+            this.state = this.pickPreferredAiState('SIDE_TRACKING');
           } else if (nextEvt.type === 'RACE_END') {
-            this.state = 'OVERVIEW';
+            this.state = this.pickPreferredAiState('OVERVIEW');
           } else {
-            this.state = 'CHASE';
+            this.state = this.pickPreferredAiState('CHASE');
           }
           this.hudDirty = true;
         }
