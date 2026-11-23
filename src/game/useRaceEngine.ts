@@ -446,6 +446,14 @@ export function useRaceEngine() {
         coinsSpent: saved?.totalCoins ?? 0,
       };
 
+      // Nếu đang ở phòng chờ (lobby) và đã đủ 10 tay đua có kèm Bot -> nhường 1 chỗ Bot cho người chơi thật!
+      if (!isBot && phaseRef.current === 'lobby' && map.size >= 10) {
+        const botToReplace = Array.from(map.values()).find((r) => r.isBot);
+        if (botToReplace) {
+          map.delete(botToReplace.id);
+        }
+      }
+
       map.set(userId, racer);
       setRacerCount(map.size);
       if (!isBot) {
@@ -843,6 +851,9 @@ export function useRaceEngine() {
         });
       }
 
+      // Cho các nhân vật xuất hiện sẵn trên vạch xuất phát ngay trong thời gian chờ Lobby!
+      fillBotsIfNeeded();
+
       lobbyHypeDoneRef.current = false;
       liveCommentAccumRef.current = 0;
 
@@ -857,7 +868,7 @@ export function useRaceEngine() {
       );
       pushRaceSync(true);
     },
-    [ensureRacer, pushFeed, pushRaceSync],
+    [ensureRacer, fillBotsIfNeeded, pushFeed, pushRaceSync],
   );
 
   const startRacingPhase = useCallback(() => {
@@ -1290,16 +1301,24 @@ export function useRaceEngine() {
         }
       })
       .catch(() => { });
-    // Đồng bộ ngay trạng thái cuộc đua hiện tại từ Server khi mở trang Stage (/?view=stage)
+    // Đồng bộ ngay trạng thái cuộc đua hiện tại từ Server; nếu đang ở Lobby chưa có ai thì xếp nhân vật lên vạch xuất phát ngay!
     void fetch('/api/race/sync')
       .then((r) => r.json())
       .then((j) => {
         if (j?.success && j.data) {
           applyRaceSync(j.data);
         }
+        if (phaseRef.current === 'lobby' && racersRef.current.size === 0) {
+          fillBotsIfNeeded();
+          pushRaceSync(true);
+        }
       })
-      .catch(() => { });
-  }, [applyRaceSync, applySavedUsersList]);
+      .catch(() => {
+        if (phaseRef.current === 'lobby' && racersRef.current.size === 0) {
+          fillBotsIfNeeded();
+        }
+      });
+  }, [applyRaceSync, applySavedUsersList, fillBotsIfNeeded, pushRaceSync]);
 
   // ---------- Kết nối Backend qua cả SSE (/api/tiktok/events giống npc-action-live) + WebSocket (/ws) ----------
   useEffect(() => {
