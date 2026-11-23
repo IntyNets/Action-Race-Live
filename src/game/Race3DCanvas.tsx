@@ -28,6 +28,7 @@ interface Race3DCanvasProps {
   onDroneRectChange?: (rect: DroneRect) => void;
   canEditDrone?: boolean;
   graphicsQuality?: GraphicsQuality;
+  onFpsSample?: (fps: number) => void;
 }
 
 interface DroneTagInfo {
@@ -113,6 +114,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   onDroneRectChange,
   canEditDrone = false,
   graphicsQuality = 'medium',
+  onFpsSample,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const badgeElsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -133,6 +135,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   graphicsQualityRef.current = graphicsQuality;
   const droneRectRef = useRef<DroneRect>(droneRect);
   droneRectRef.current = droneRect;
+  const onFpsSampleRef = useRef(onFpsSample);
+  onFpsSampleRef.current = onFpsSample;
 
   // Xử lý kéo thả & thu phóng khung Camera Drone trực tiếp trên Bảng Điều Khiển
   const startDroneInteract = (e: React.PointerEvent, mode: 'move' | 'resize') => {
@@ -963,10 +967,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const leafSideInst =
             quality !== 'low'
               ? new THREE.InstancedMesh(
-                  scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
-                  leafMatC,
-                  tCount * 2,
-                )
+                scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
+                leafMatC,
+                tCount * 2,
+              )
               : null;
 
           if (enableWorldShadows) {
@@ -2533,7 +2537,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           fpsFrames++;
           fpsAccum += dt;
           if (fpsAccum >= 1.0) {
-            setFps(Math.round(fpsFrames / fpsAccum));
+            const measuredFps = Math.round(fpsFrames / fpsAccum);
+            setFps(measuredFps);
+            onFpsSampleRef.current?.(measuredFps);
             fpsFrames = 0;
             fpsAccum = 0;
           }
@@ -3678,13 +3684,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           >
             {b.isPodium ? (
               <div
-                className={`flex flex-col items-center rounded-2xl px-2 py-1.5 border-2 backdrop-blur-md shadow-[0_6px_22px_rgba(0,0,0,0.65)] ${
-                  b.rank === 1
+                className={`flex flex-col items-center rounded-2xl px-2 py-1.5 border-2 backdrop-blur-md shadow-[0_6px_22px_rgba(0,0,0,0.65)] ${b.rank === 1
                     ? 'bg-gradient-to-b from-amber-400/90 to-amber-600/90 border-yellow-100 text-slate-950'
                     : b.rank === 2
                       ? 'bg-gradient-to-b from-slate-200/90 to-slate-400/90 border-white text-slate-950'
                       : 'bg-gradient-to-b from-orange-400/90 to-amber-700/90 border-orange-200 text-white'
-                }`}
+                  }`}
               >
                 <span className="text-[10px] font-black leading-none mb-1">
                   {b.rank === 1 ? '👑 #1' : b.rank === 2 ? '🥈 #2' : '🥉 #3'}
@@ -3692,9 +3697,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 <img
                   src={b.avatar}
                   alt={b.nickname}
-                  className={`rounded-full object-cover border-2 border-white shadow-lg bg-slate-800 ${
-                    b.rank === 1 ? 'w-14 h-14' : 'w-11 h-11'
-                  }`}
+                  className={`rounded-full object-cover border-2 border-white shadow-lg bg-slate-800 ${b.rank === 1 ? 'w-14 h-14' : 'w-11 h-11'
+                    }`}
                 />
                 <span className="mt-1 text-[10px] font-black max-w-[78px] truncate leading-tight">
                   {b.nickname}
@@ -3717,26 +3721,24 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   )}
                 </div>
                 <div
-                  className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${
-                    b.rank === 1
+                  className={`flex items-center gap-1 pr-2 pl-0.5 py-0.5 rounded-full border backdrop-blur-sm shadow-md ${b.rank === 1
                       ? 'bg-amber-400/95 border-yellow-100 text-slate-950 scale-105 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
                       : b.rank === 2
                         ? 'bg-slate-200/95 border-white text-slate-900'
                         : b.rank === 3
                           ? 'bg-orange-400/95 border-orange-200 text-slate-950'
                           : 'bg-slate-950/80 border-white/30 text-white'
-                  }`}
+                    }`}
                 >
                   <span
-                    className={`px-1.5 py-[1px] rounded-full text-[10px] font-black leading-tight ${
-                      b.rank === 1
+                    className={`px-1.5 py-[1px] rounded-full text-[10px] font-black leading-tight ${b.rank === 1
                         ? 'bg-slate-950 text-amber-300'
                         : b.rank === 2
                           ? 'bg-slate-800 text-white'
                           : b.rank === 3
                             ? 'bg-slate-950 text-orange-300'
                             : 'bg-sky-500 text-slate-950'
-                    }`}
+                      }`}
                   >
                     #{b.rank}
                   </span>
@@ -3747,24 +3749,22 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   />
                   <span className="text-[10px] font-bold max-w-[74px] truncate">{b.nickname}</span>
                   <span
-                    className={`px-1 py-[1px] rounded text-[8.5px] font-black ${
-                      b.rank <= 3 ? 'bg-black/20 text-slate-950' : 'bg-black/40 text-amber-300'
-                    }`}
+                    className={`px-1 py-[1px] rounded text-[8.5px] font-black ${b.rank <= 3 ? 'bg-black/20 text-slate-950' : 'bg-black/40 text-amber-300'
+                      }`}
                   >
                     V{b.lap}
                   </span>
                 </div>
                 {/* Mũi tên nhỏ chỉ trực tiếp xuống đỉnh đầu nhân vật */}
                 <div
-                  className={`w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] -mt-0.5 ${
-                    b.rank === 1
+                  className={`w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] -mt-0.5 ${b.rank === 1
                       ? 'border-t-amber-300'
                       : b.rank === 2
                         ? 'border-t-slate-200'
                         : b.rank === 3
                           ? 'border-t-orange-400'
                           : 'border-t-white/70'
-                  }`}
+                    }`}
                 />
               </>
             )}
@@ -3783,9 +3783,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           width: `${droneRect.w}%`,
           height: `${droneRect.h}%`,
         }}
-        className={`${
-          canEditDrone ? 'pointer-events-auto cursor-move' : 'pointer-events-none'
-        } absolute rounded-2xl border-2 border-sky-400/90 shadow-[0_0_28px_rgba(14,165,233,0.55)] overflow-hidden z-20 select-none`}
+        className={`${canEditDrone ? 'pointer-events-auto cursor-move' : 'pointer-events-none'
+          } absolute rounded-2xl border-2 border-sky-400/90 shadow-[0_0_28px_rgba(14,165,233,0.55)] overflow-hidden z-20 select-none`}
       >
         {/* Thanh tiêu đề Drone Live */}
         <div className="absolute top-0 left-0 right-0 px-2 py-1 bg-slate-950/85 border-b border-sky-400/50 backdrop-blur-sm flex items-center justify-between">
@@ -3810,13 +3809,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               className="absolute left-0 top-0 flex flex-col items-center"
             >
               <div
-                className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-full border shadow-md whitespace-nowrap ${
-                  t.rank === 1
+                className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-full border shadow-md whitespace-nowrap ${t.rank === 1
                     ? 'bg-amber-400/95 border-yellow-100 text-slate-950 font-black scale-105'
                     : t.boost !== 'none'
                       ? 'bg-cyan-400/95 border-white text-slate-950 font-black'
                       : 'bg-slate-950/85 border-white/50 text-white font-bold'
-                }`}
+                  }`}
               >
                 <span
                   style={{ backgroundColor: t.color }}

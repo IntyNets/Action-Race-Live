@@ -21,6 +21,7 @@ import {
   CameraModeOverride,
 } from './camera/CameraDirector';
 import {
+  getTtsQueueLength,
   playCountdownBeep,
   playCrowdCheerSfx,
   playFinishFanfareSfx,
@@ -29,12 +30,24 @@ import {
   playRocketSfx,
   playSprintSfx,
   playVipDragonSfx,
+  runTtsSelfTest,
   setAudioSettings,
   setCommentatorCaptionListener,
   setCommentatorSpeakingListener,
   speakCommentator,
-  stopCommentator,
+  speakGiftThankYou,
+  startRaceBgm,
+  stopNonCriticalCommentator,
 } from '../audio/raceAudio';
+import { liveRuntime } from '../audio/liveRuntime';
+import {
+  StageHealthMessage,
+  StageHealthSnapshot,
+  TtsTestResult,
+  WebcamRect,
+  WebcamStatus,
+  openHealthChannel,
+} from '../live/stageHealth';
 
 // Phân tách Chế Độ Live (/?view=stage) và Bảng Điều Khiển (/) giống npc-action-live
 export const IS_STAGE =
@@ -206,6 +219,33 @@ export function useRaceEngine() {
   });
   const [isMcSpeaking, setIsMcSpeaking] = useState<boolean>(false);
   const [focusedRacer, setFocusedRacer] = useState<(RacerState & { gapSec: number }) | null>(null);
+  // Webcam Host PiP — mặc định TẮT, chỉ xin quyền camera sau thao tác chủ động của người vận hành
+  const webcamEnabledRef = useRef<boolean>(false);
+  const [webcamEnabled, setWebcamEnabledState] = useState<boolean>(false);
+  const defaultWebcamRect: WebcamRect = { x: 4, y: 63, w: 28, h: 16, shape: 'circle' };
+  const webcamRectRef = useRef<WebcamRect>(defaultWebcamRect);
+  const [webcamRect, setWebcamRectState] = useState<WebcamRect>(() => {
+    try {
+      const saved = localStorage.getItem('webcamRect');
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (p && typeof p.x === 'number' && typeof p.y === 'number' && typeof p.w === 'number' && typeof p.h === 'number') {
+          webcamRectRef.current = p;
+          return p;
+        }
+      }
+    } catch {}
+    return defaultWebcamRect;
+  });
+  const webcamStatusRef = useRef<WebcamStatus>('off');
+  const [webcamStatus, setWebcamStatusState] = useState<WebcamStatus>('off');
+  const [liveModeStarted, setLiveModeStarted] = useState<boolean>(false);
+  const stageFpsRef = useRef<number>(60);
+  const lowFpsStreakRef = useRef<number>(0);
+  const healthChannelRef = useRef<BroadcastChannel | null>(null);
+  const [stageHealth, setStageHealth] = useState<StageHealthSnapshot | null>(null);
+  const [stageOnline, setStageOnline] = useState<boolean>(false);
+  const [ttsTestResult, setTtsTestResult] = useState<TtsTestResult>({ status: 'untested' });
   const cameraModeRef = useRef<CameraModeOverride>('auto');
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
   const defaultAiModes: AiDirectorModes = {
@@ -674,6 +714,8 @@ export function useRaceEngine() {
       graphicsQuality: graphicsQualityRef.current,
       cameraMode: cameraModeRef.current,
       aiCameraModes: aiCameraModesRef.current,
+      webcamEnabled: webcamEnabledRef.current,
+      webcamRect: webcamRectRef.current,
       racers: racersList,
       spectators: Array.from(spectatorsRef.current.values()),
     };
@@ -773,6 +815,22 @@ export function useRaceEngine() {
         cameraDirectorRef.current.setAiModes(m);
       }
     }
+    if (typeof snap.webcamEnabled === 'boolean' && snap.webcamEnabled !== webcamEnabledRef.current) {
+      webcamEnabledRef.current = snap.webcamEnabled;
+      setWebcamEnabledState(snap.webcamEnabled);
+    }
+    if (
+      snap.webcamRect &&
+      typeof snap.webcamRect.x === 'number' &&
+      typeof snap.webcamRect.y === 'number'
+    ) {
+      const wr = snap.webcamRect as WebcamRect;
+      const cur = webcamRectRef.current;
+      if (cur.x !== wr.x || cur.y !== wr.y || cur.w !== wr.w || cur.h !== wr.h || cur.shape !== wr.shape) {
+        webcamRectRef.current = wr;
+        setWebcamRectState(wr);
+      }
+    }
     if (typeof snap.timer === 'number') {
       timerRef.current = snap.timer;
     }
@@ -788,19 +846,19 @@ export function useRaceEngine() {
         phaseRef.current = snap.phase;
         setPhase(snap.phase);
         if (IS_STAGE) {
-          stopCommentator();
+          stopNonCriticalCommentator();
           if (snap.phase === 'racing') {
             playCountdownBeep(true);
             playCrowdCheerSfx();
-            speakCommentator('Xuất phát! Các tay đua đang lao vọt lên phía trước!', true);
+            speakCommentator('Xuất phát! Các tay đua đang lao vọt lên phía trước!', true, 'phase');
           } else if (snap.phase === 'countdown') {
             playFinishFanfareSfx();
-            speakCommentator('Đã có tay đua cán đích! Còn 5 giây cuối tranh Top 3!', true);
+            speakCommentator('Đã có tay đua cán đích! Còn 5 giây cuối tranh Top 3!', true, 'phase');
           } else if (snap.phase === 'podium') {
             playFinishFanfareSfx();
             playCrowdCheerSfx();
           } else if (snap.phase === 'lobby') {
-            speakCommentator('Mở ván đua mới! Follow kênh và nhắn join để vào sân ngay!', true);
+            speakCommentator('Mở ván đua mới! Follow kênh và nhắn join để vào sân ngay!', true, 'phase');
           }
         }
         if (snap.phase === 'lobby') {
@@ -971,7 +1029,7 @@ export function useRaceEngine() {
       lobbyHypeDoneRef.current = false;
       liveCommentAccumRef.current = 0;
 
-      stopCommentator();
+      stopNonCriticalCommentator();
       pushFeed(
         `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Follow kênh & nhắn "join" để vào đường đua!`,
         'system',
@@ -979,6 +1037,7 @@ export function useRaceEngine() {
       speakCommentator(
         `Mở ván ${matchNoRef.current}! Follow kênh và nhắn join để vào đua ngay nào!`,
         true,
+        'phase',
       );
       pushRaceSync(true);
     },
@@ -1001,7 +1060,7 @@ export function useRaceEngine() {
     lastTop1IdRef.current = '';
     setPhase('racing');
     setTimerSec(raceDurationRef.current);
-    stopCommentator();
+    stopNonCriticalCommentator();
     playCountdownBeep(true);
     playCrowdCheerSfx();
     pushFeed(
@@ -1011,6 +1070,7 @@ export function useRaceEngine() {
     speakCommentator(
       `Xuất phát rồi! Cuộc đua ${totalLapsRef.current} vòng chính thức bắt đầu!`,
       true,
+      'phase',
     );
     pushRaceSync(true);
   }, [fillBotsIfNeeded, pushFeed, pushRaceSync]);
@@ -1024,7 +1084,7 @@ export function useRaceEngine() {
     const sorted = Array.from(racersRef.current.values()).sort((a, b) => a.rank - b.rank);
     const winners = sorted.slice(0, 3);
     setPodiumTop3(winners);
-    stopCommentator();
+    stopNonCriticalCommentator();
     playFinishFanfareSfx();
     playCrowdCheerSfx();
 
@@ -1302,12 +1362,13 @@ export function useRaceEngine() {
           `🐉 ĐẠI GIA ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - TRIỆU HỒI RỒNG THẦN HOÀNG KIM!`,
           'dragon',
         );
-        const dragonLines = [
-          `Chấn động đường đua! Đại gia ${racer.nickname} vừa tung ${payload.giftName}, triệu hồi Rồng Thần Hoàng Kim bay vút qua mọi đối thủ!`,
-          `Trời ơi quá khủng khiếp! ${racer.nickname} vừa hóa Rồng Thần khổng lồ với ${coins} xu, tốc độ xé toạc không gian!`,
-          `Cả khán đài nổ tung! Cảm ơn ${racer.nickname} với siêu phẩm ${payload.giftName}, Rồng Thần đã xuất hiện thống trị bầu trời!`,
-        ];
-        speakCommentator(dragonLines[commentIdxRef.current++ % dragonLines.length], true);
+        speakGiftThankYou(
+          racer.id,
+          racer.nickname,
+          payload.giftName || 'Rồng Thần VIP',
+          coins,
+          'Triệu hồi Rồng Thần bay vút qua cả đoàn đua',
+        );
       } else if (coins >= 50) {
         applyBoost(racer, 'superman', 7000, '🦸 SIÊU NHÂN BAY');
         playRocketSfx();
@@ -1330,9 +1391,12 @@ export function useRaceEngine() {
           `🦸 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - HÓA SIÊU NHÂN BAY VÚT XÉ GIÓ!`,
           'rocket',
         );
-        speakCommentator(
-          `Siêu nhân xuất hiện! ${racer.nickname} vừa bùng nổ năng lượng bay vút qua cả đoàn đua!`,
-          true,
+        speakGiftThankYou(
+          racer.id,
+          racer.nickname,
+          payload.giftName || 'Siêu Nhân',
+          coins,
+          'Hóa Siêu Nhân bay vút xé gió vượt mặt đối thủ',
         );
       } else if (coins >= 11) {
         applyBoost(racer, 'rocket', 6000, '🚀 TÊN LỬA');
@@ -1356,12 +1420,13 @@ export function useRaceEngine() {
           `🚀 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - PHÓNG TÊN LỬA SIÊU TỐC!`,
           'rocket',
         );
-        const rocketLines = [
-          `Bùng nổ tốc độ! ${racer.nickname} vừa kích hoạt Tên Lửa Siêu Tốc từ ${payload.giftName}, vượt mặt hàng loạt tay đua!`,
-          `Quá gắt! ${racer.nickname} cưỡi Tên Lửa phun lửa đỏ rực, lao như tên bắn về phía ngôi đầu!`,
-          `Cú bứt phá thần sầu của ${racer.nickname} với ${payload.giftName}! Ai có thể cản nổi quả tên lửa này đây?!`,
-        ];
-        speakCommentator(rocketLines[commentIdxRef.current++ % rocketLines.length], true);
+        speakGiftThankYou(
+          racer.id,
+          racer.nickname,
+          payload.giftName || 'Tên Lửa',
+          coins,
+          'Kích hoạt Tên Lửa Siêu Tốc bứt phá thần sầu',
+        );
       } else {
         applyBoost(racer, 'jetpack', 4000, '🎒 JETPACK');
         playJetpackSfx();
@@ -1383,11 +1448,13 @@ export function useRaceEngine() {
           `🎒 ${racer.nickname} tặng ${payload.giftName} (${coins} xu) - BẬT JETPACK + 🐾 ${racer.petName}!`,
           'jetpack',
         );
-        const jetLines = [
-          `Cảm ơn ${racer.nickname} tặng ${payload.giftName}! Bật động cơ phản lực Jetpack và dẫn thú cưng bay vọt lên!`,
-          `Tuyệt vời! ${racer.nickname} vừa nạp nhiên liệu Jetpack từ ${payload.giftName}, phóng tia sét vượt qua khúc cua!`,
-        ];
-        speakCommentator(jetLines[commentIdxRef.current++ % jetLines.length], true);
+        speakGiftThankYou(
+          racer.id,
+          racer.nickname,
+          payload.giftName || 'Hoa hồng',
+          coins,
+          'Bật động cơ Jetpack cùng thú cưng VIP tăng tốc',
+        );
       }
       pushRaceSync(true);
     },
@@ -1521,6 +1588,17 @@ export function useRaceEngine() {
           setAiCameraModesState(nextModes);
           cameraDirectorRef.current.setAiModes(nextModes);
           setCameraHud(cameraDirectorRef.current.getHudState());
+        } else if (action === 'setWebcamEnabled' && typeof value === 'boolean') {
+          webcamEnabledRef.current = value;
+          setWebcamEnabledState(value);
+        } else if (
+          action === 'setWebcamRect' &&
+          value &&
+          typeof value.x === 'number' &&
+          typeof value.y === 'number'
+        ) {
+          webcamRectRef.current = value as WebcamRect;
+          setWebcamRectState(value as WebcamRect);
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -2251,6 +2329,165 @@ export function useRaceEngine() {
     [postControl],
   );
 
+  // ---------- StageHealthMonitor qua BroadcastChannel (giám sát FPS, visibilityState, AudioContext, Wake Lock, Webcam) ----------
+  useEffect(() => {
+    const ch = openHealthChannel();
+    healthChannelRef.current = ch;
+    if (!ch) return;
+
+    if (IS_STAGE) {
+      const sendHeartbeat = () => {
+        const fpsNow = stageFpsRef.current;
+        if (fpsNow < 15) {
+          lowFpsStreakRef.current += 1;
+        } else {
+          lowFpsStreakRef.current = 0;
+        }
+        const snap: StageHealthSnapshot = {
+          fps: fpsNow,
+          lowFpsStreakSec: lowFpsStreakRef.current,
+          visibilityState: document.visibilityState,
+          audioState: liveRuntime.getAudioState(),
+          audioLevel: liveRuntime.getAudioLevel(),
+          wakeLockStatus: liveRuntime.getWakeLockStatus(),
+          webcamState: webcamStatusRef.current,
+          liveStarted: liveRuntime.isLiveStarted(),
+          ttsQueueLen: getTtsQueueLength(),
+          timestamp: Date.now(),
+        };
+        setStageHealth(snap);
+        const msg: StageHealthMessage = { type: 'heartbeat', data: snap };
+        try {
+          ch.postMessage(msg);
+        } catch {}
+      };
+
+      const onMsg = (ev: MessageEvent<StageHealthMessage>) => {
+        if (ev.data?.type === 'requestTtsTest') {
+          const testing: TtsTestResult = { status: 'testing' };
+          try {
+            ch.postMessage({ type: 'ttsTestResult', data: testing });
+          } catch {}
+          void runTtsSelfTest().then((res) => {
+            const finalRes: TtsTestResult = {
+              status: res.ok ? 'ok' : 'error',
+              latencyMs: res.latencyMs,
+              error: res.error,
+              testedAt: Date.now(),
+            };
+            try {
+              ch.postMessage({ type: 'ttsTestResult', data: finalRes });
+            } catch {}
+          });
+        }
+      };
+
+      ch.addEventListener('message', onMsg);
+      const onVis = () => sendHeartbeat();
+      document.addEventListener('visibilitychange', onVis);
+      sendHeartbeat();
+      const timer = window.setInterval(sendHeartbeat, 1000);
+      return () => {
+        clearInterval(timer);
+        document.removeEventListener('visibilitychange', onVis);
+        ch.removeEventListener('message', onMsg);
+        ch.close();
+      };
+    } else {
+      // Dashboard (/) nhận nhịp tim sức khỏe thực tế từ Stage (/?view=stage)
+      let lastBeat = 0;
+      const onMsg = (ev: MessageEvent<StageHealthMessage>) => {
+        if (ev.data?.type === 'heartbeat' && ev.data.data) {
+          lastBeat = Date.now();
+          setStageHealth(ev.data.data);
+          setStageOnline(true);
+        } else if (ev.data?.type === 'ttsTestResult' && ev.data.data) {
+          setTtsTestResult(ev.data.data);
+        }
+      };
+      ch.addEventListener('message', onMsg);
+      const watchdog = window.setInterval(() => {
+        if (lastBeat > 0 && Date.now() - lastBeat > 3600) {
+          setStageOnline(false);
+        }
+      }, 1000);
+      return () => {
+        clearInterval(watchdog);
+        ch.removeEventListener('message', onMsg);
+        ch.close();
+      };
+    }
+  }, []);
+
+  const reportStageFps = useCallback((fpsVal: number) => {
+    stageFpsRef.current = fpsVal;
+  }, []);
+
+  const startStageLiveMode = useCallback(async () => {
+    await liveRuntime.startLiveMode({ keepScreenAwake: true });
+    setLiveModeStarted(true);
+    if (IS_STAGE) {
+      startRaceBgm();
+    }
+  }, []);
+
+  const changeWebcamEnabled = useCallback(
+    (enabled: boolean) => {
+      webcamEnabledRef.current = enabled;
+      setWebcamEnabledState(enabled);
+      if (!enabled) {
+        webcamStatusRef.current = 'off';
+        setWebcamStatusState('off');
+      }
+      postControl('setWebcamEnabled', enabled);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
+  const changeWebcamRect = useCallback(
+    (rect: WebcamRect) => {
+      webcamRectRef.current = rect;
+      setWebcamRectState(rect);
+      try {
+        localStorage.setItem('webcamRect', JSON.stringify(rect));
+      } catch {}
+      postControl('setWebcamRect', rect);
+    },
+    [postControl],
+  );
+
+  const handleWebcamStatusChange = useCallback((st: WebcamStatus) => {
+    webcamStatusRef.current = st;
+    setWebcamStatusState(st);
+  }, []);
+
+  const triggerTtsTest = useCallback(async () => {
+    setTtsTestResult({ status: 'testing' });
+    if (IS_STAGE) {
+      const res = await runTtsSelfTest();
+      setTtsTestResult({
+        status: res.ok ? 'ok' : 'error',
+        latencyMs: res.latencyMs,
+        error: res.error,
+        testedAt: Date.now(),
+      });
+      return;
+    }
+    if (stageOnline && healthChannelRef.current) {
+      healthChannelRef.current.postMessage({ type: 'requestTtsTest' } as StageHealthMessage);
+    } else {
+      // Nếu chưa mở Stage -> kiểm tra trực tiếp endpoint /api/tts trên Dashboard để xác nhận backend TTS sống
+      const res = await runTtsSelfTest();
+      setTtsTestResult({
+        status: res.ok ? 'ok' : 'error',
+        latencyMs: res.latencyMs,
+        error: res.error,
+        testedAt: Date.now(),
+      });
+    }
+  }, [stageOnline]);
+
   return {
     racersRef,
     spectatorsRef,
@@ -2291,6 +2528,19 @@ export function useRaceEngine() {
     setCameraMode: changeCameraMode,
     aiCameraModes,
     toggleAiCameraMode,
+    webcamEnabled,
+    setWebcamEnabled: changeWebcamEnabled,
+    webcamRect,
+    setWebcamRect: changeWebcamRect,
+    webcamStatus,
+    setWebcamStatus: handleWebcamStatusChange,
+    liveModeStarted,
+    startStageLiveMode,
+    stageHealth,
+    stageOnline,
+    ttsTestResult,
+    triggerTtsTest,
+    reportStageFps,
     stepPhysics,
     connectTikTok,
     disconnectTikTok,

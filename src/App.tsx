@@ -19,6 +19,7 @@ import { Race3DCanvas } from './game/Race3DCanvas';
 import { IS_STAGE, useRaceEngine } from './game/useRaceEngine';
 import { setAudioSettings } from './audio/raceAudio';
 import { CIRCUIT_TRACK, MAPS, getMapLapKm } from './game/trackCurve';
+import { HostWebcamPip } from './live/HostWebcamPip';
 
 export default function App() {
   const engine = useRaceEngine();
@@ -72,6 +73,18 @@ export default function App() {
     setCameraMode,
     aiCameraModes,
     toggleAiCameraMode,
+    webcamEnabled,
+    setWebcamEnabled,
+    webcamRect,
+    setWebcamRect,
+    setWebcamStatus,
+    liveModeStarted,
+    startStageLiveMode,
+    stageHealth,
+    stageOnline,
+    ttsTestResult,
+    triggerTtsTest,
+    reportStageFps,
   } = engine;
 
   const [platformTab, setPlatformTab] = useState<'tiktok' | 'facebook'>(() => {
@@ -276,7 +289,43 @@ export default function App() {
         onDroneRectChange={setDroneRect}
         canEditDrone={!IS_STAGE}
         graphicsQuality={graphicsQuality}
+        onFpsSample={reportStageFps}
       />
+
+      {/* Khung Webcam Chủ Phòng PiP (Mặc định Tắt — Chỉ xin quyền camera audio:false khi bật chủ động) */}
+      <HostWebcamPip
+        enabled={webcamEnabled}
+        rect={webcamRect}
+        onRectChange={setWebcamRect}
+        canEdit={!IS_STAGE}
+        captureRealVideo={IS_STAGE}
+        onStatusChange={setWebcamStatus}
+      />
+
+      {/* Nút Kích Hoạt Chế Độ Live trên Stage (mở khóa AudioContext + Screen Wake Lock bằng thao tác click thật) */}
+      {IS_STAGE && !liveModeStarted && (
+        <div className="absolute inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-6">
+          <div className="max-w-[320px] w-full rounded-2xl bg-slate-900/95 border-2 border-rose-500/80 p-5 text-center shadow-[0_0_50px_rgba(244,63,94,0.45)] flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-rose-600/20 border border-rose-400/60 flex items-center justify-center text-2xl">
+              🔴
+            </div>
+            <div className="text-sm font-black text-white">
+              Sẵn Sàng Phát Sóng Trực Tiếp (9:16)
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Nhấn nút bên dưới để mở khóa <b>Audio Master Bus</b> (BGM + SFX + MC TTS), kích hoạt{' '}
+              <b>Screen Wake Lock</b> và bắt đầu gửi nhịp tim sức khỏe về Bảng Điều Khiển.
+            </p>
+            <button
+              type="button"
+              onClick={() => void startStageLiveMode()}
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:brightness-110 text-slate-950 text-xs font-black tracking-wide shadow-lg transition cursor-pointer"
+            >
+              🔴 BẮT ĐẦU CHẾ ĐỘ LIVE
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ==================== TOP HUD (Bố cục chuẩn ảnh tham chiếu: Mini Map + Danh sách bên trái, LAP giữa, MC & Trạng thái bên phải) ==================== */}
       <div className="pointer-events-none absolute top-0 left-0 right-0 z-20 pt-2.5 px-2.5 pb-2 flex flex-col gap-1.5">
@@ -430,17 +479,30 @@ export default function App() {
                 <span>{racerCount}</span>
               </div>
               {IS_STAGE && (
-                <button
-                  onClick={() => handleAudioToggle('bgm')}
-                  title="Bật/Tắt nhạc nền"
-                  className="p-1 rounded-lg bg-slate-950/70 border border-white/15 hover:bg-slate-800 transition"
-                >
-                  {bgmOn ? (
-                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : (
-                    <VolumeX className="w-3.5 h-3.5 text-slate-400" />
-                  )}
-                </button>
+                <>
+                  <button
+                    onClick={() => setWebcamEnabled(!webcamEnabled)}
+                    title={webcamEnabled ? 'Tắt Webcam Chủ Phòng' : 'Bật Webcam Chủ Phòng (chỉ hình, không mic)'}
+                    className={`p-1 rounded-lg border transition text-[11px] leading-none ${
+                      webcamEnabled
+                        ? 'bg-rose-600/90 border-rose-300 text-white'
+                        : 'bg-slate-950/70 border-white/15 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    📷
+                  </button>
+                  <button
+                    onClick={() => handleAudioToggle('bgm')}
+                    title="Bật/Tắt nhạc nền"
+                    className="p-1 rounded-lg bg-slate-950/70 border border-white/15 hover:bg-slate-800 transition"
+                  >
+                    {bgmOn ? (
+                      <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                  </button>
+                </>
               )}
             </div>
             <span
@@ -733,6 +795,260 @@ export default function App() {
         {/* Cột Phải: Các thẻ điều khiển tách biệt */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 lg:p-6">
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
+            {/* 0. Giám Sát Sức Khỏe Phiên Live & Pre-Live Checklist (Dữ Liệu Thực Tế 100%) */}
+            <section className="rounded-2xl bg-slate-900/90 border border-emerald-500/35 p-4 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-black text-emerald-300 flex items-center gap-2">
+                  🛡️ Giám Sát Sức Khỏe Live & Pre-Live Checklist
+                </h2>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10.5px] font-black border ${
+                    !stageOnline
+                      ? 'bg-slate-800 text-slate-400 border-white/15'
+                      : stageHealth?.visibilityState === 'hidden' || (stageHealth?.lowFpsStreakSec ?? 0) >= 4
+                        ? 'bg-rose-600/90 text-white border-rose-200 animate-pulse'
+                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'
+                  }`}
+                >
+                  {!stageOnline
+                    ? '⚪ Chưa mở trang Stage (/?view=stage)'
+                    : stageHealth?.visibilityState === 'hidden'
+                      ? '🚨 STAGE ĐANG BỊ ẨN / MINIMIZE'
+                      : (stageHealth?.lowFpsStreakSec ?? 0) >= 4
+                        ? `🚨 TỤT FPS LIÊN TỤC (${stageHealth?.fps} FPS)`
+                        : `🟢 STAGE ỔN ĐỊNH · ${stageHealth?.fps ?? 0} FPS`}
+                </span>
+              </div>
+
+              {/* Cảnh báo đỏ nếu Stage bị ẩn hoặc tụt FPS kéo dài */}
+              {stageOnline && stageHealth?.visibilityState === 'hidden' && (
+                <div className="rounded-xl bg-rose-950/70 border border-rose-400/70 px-3 py-2 text-xs font-bold text-rose-200">
+                  ⚠️ Cửa sổ <code>/?view=stage</code> đang bị ẩn hoặc thu nhỏ (<code>hidden</code>). Trình duyệt sẽ bóp FPS và TikTok LIVE Studio có thể bị đứng hình — hãy giữ cửa sổ Stage luôn hiển thị!
+                </div>
+              )}
+              {stageOnline && (stageHealth?.lowFpsStreakSec ?? 0) >= 4 && (
+                <div className="rounded-xl bg-amber-950/70 border border-amber-400/70 px-3 py-2 text-xs font-bold text-amber-200">
+                  ⚠️ FPS dưới 15 liên tục {stageHealth?.lowFpsStreakSec} giây ({stageHealth?.fps} FPS). Hãy hạ Chất Lượng Đồ Họa xuống mức <b>Thấp</b> hoặc <b>Trung Bình</b>!
+                </div>
+              )}
+
+              {/* Thanh đo sóng âm thực tế từ AnalyserNode trên Stage */}
+              <div className="rounded-xl bg-slate-950/75 border border-white/10 px-3 py-2 flex items-center gap-3">
+                <span className="text-[11px] font-bold text-slate-300 shrink-0">
+                  📊 Sóng âm Master Bus:
+                </span>
+                <div className="flex-1 h-2.5 rounded-full bg-slate-800 overflow-hidden border border-white/10">
+                  <div
+                    style={{
+                      width: `${stageOnline ? Math.min(100, Math.round((stageHealth?.audioLevel ?? 0) * 100)) : 0}%`,
+                      transition: 'width 150ms ease-out',
+                    }}
+                    className="h-full bg-gradient-to-r from-emerald-400 via-amber-300 to-rose-500"
+                  />
+                </div>
+                <span className="text-[10.5px] font-mono text-sky-300 w-16 text-right shrink-0">
+                  {stageOnline ? `${Math.round((stageHealth?.audioLevel ?? 0) * 100)}%` : 'N/A'}
+                </span>
+              </div>
+
+              {/* Bảng Pre-Live Checklist đo từ dữ liệu thực tế */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">1. Stage hoạt động</span>
+                  <span className={stageOnline ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                    {stageOnline ? '✅ Heartbeat OK' : '⚠️ Chưa mở'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">2. Stage hiển thị</span>
+                  <span
+                    className={
+                      !stageOnline
+                        ? 'text-slate-400'
+                        : stageHealth?.visibilityState === 'visible'
+                          ? 'text-emerald-400 font-bold'
+                          : 'text-rose-400 font-bold'
+                    }
+                  >
+                    {!stageOnline
+                      ? '❔ Chưa xác định'
+                      : stageHealth?.visibilityState === 'visible'
+                        ? '✅ Visible'
+                        : '🚨 Hidden'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">3. Audio Master Bus</span>
+                  <span
+                    className={
+                      !stageOnline
+                        ? 'text-slate-400'
+                        : stageHealth?.audioState === 'running'
+                          ? 'text-emerald-400 font-bold'
+                          : 'text-amber-300 font-bold'
+                    }
+                  >
+                    {!stageOnline
+                      ? '❔ Chưa xác định'
+                      : stageHealth?.audioState === 'running'
+                        ? '✅ Running'
+                        : `⚠️ ${stageHealth?.audioState || 'chưa mở'}`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">4. Screen Wake Lock</span>
+                  <span
+                    className={
+                      !stageOnline
+                        ? 'text-slate-400'
+                        : stageHealth?.wakeLockStatus === 'active'
+                          ? 'text-emerald-400 font-bold'
+                          : 'text-slate-300'
+                    }
+                  >
+                    {!stageOnline
+                      ? '❔ Chưa xác định'
+                      : stageHealth?.wakeLockStatus === 'active'
+                        ? '✅ Đang giữ sáng'
+                        : stageHealth?.wakeLockStatus === 'unsupported'
+                          ? 'ℹ️ Không hỗ trợ'
+                          : '⚠️ Chưa bật'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">5. FPS thực tế</span>
+                  <span
+                    className={
+                      !stageOnline
+                        ? 'text-slate-400'
+                        : (stageHealth?.lowFpsStreakSec ?? 0) >= 4
+                          ? 'text-rose-400 font-bold'
+                          : 'text-emerald-400 font-bold'
+                    }
+                  >
+                    {!stageOnline ? '❔ Chưa xác định' : `✅ ${stageHealth?.fps ?? 0} FPS`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">6. TikTok / FB Live</span>
+                  <span
+                    className={
+                      liveStatus.connected || fb?.isConnected
+                        ? 'text-emerald-400 font-bold'
+                        : 'text-amber-300 font-bold'
+                    }
+                  >
+                    {liveStatus.connected || fb?.isConnected ? '✅ Đã kết nối' : '⚠️ Chưa kết nối'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">7. Webcam Chủ Phòng</span>
+                  <span
+                    className={
+                      stageHealth?.webcamState === 'active'
+                        ? 'text-emerald-400 font-bold'
+                        : stageHealth?.webcamState === 'lost' || stageHealth?.webcamState === 'denied'
+                          ? 'text-rose-400 font-bold'
+                          : 'text-slate-400'
+                    }
+                  >
+                    {!stageOnline
+                      ? webcamEnabled
+                        ? '⏳ Đang chờ Stage'
+                        : '⏸️ Tắt (Mặc định)'
+                      : stageHealth?.webcamState === 'active'
+                        ? '✅ Track đang chạy'
+                        : stageHealth?.webcamState === 'lost'
+                          ? '🚨 Mất tín hiệu'
+                          : stageHealth?.webcamState === 'denied'
+                            ? '🚨 Chưa cấp quyền'
+                            : '⏸️ Tắt (Mặc định)'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
+                  <span className="text-slate-300">8. Kiểm tra TTS thật</span>
+                  <button
+                    type="button"
+                    onClick={() => void triggerTtsTest()}
+                    disabled={ttsTestResult.status === 'testing'}
+                    className={`px-2 py-0.5 rounded font-black text-[10px] transition ${
+                      ttsTestResult.status === 'ok'
+                        ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/50'
+                        : ttsTestResult.status === 'error'
+                          ? 'bg-rose-500/25 text-rose-300 border border-rose-400/50'
+                          : 'bg-sky-600 hover:bg-sky-500 text-white'
+                    }`}
+                  >
+                    {ttsTestResult.status === 'testing'
+                      ? '⏳ Đang test...'
+                      : ttsTestResult.status === 'ok'
+                        ? `✅ OK (${ttsTestResult.latencyMs}ms)`
+                        : ttsTestResult.status === 'error'
+                          ? '❌ Lỗi · Thử lại'
+                          : '🔊 Test TTS Ngay'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Điều khiển Webcam Chủ Phòng PiP (Mặc định TẮT, chỉ xin quyền camera audio: false khi bật) */}
+              <div className="rounded-xl bg-slate-950/75 border border-rose-400/30 p-3 flex flex-col gap-2 text-xs">
+                <label className="flex items-center justify-between font-bold cursor-pointer">
+                  <span>📷 Bật Webcam Chủ Phòng PiP (chỉ hình, không mic · Kéo thả trên Preview)</span>
+                  <input
+                    type="checkbox"
+                    checked={webcamEnabled}
+                    onChange={(e) => setWebcamEnabled(e.target.checked)}
+                  />
+                </label>
+                {webcamEnabled && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10 text-[10.5px]">
+                    <span className="text-rose-200">
+                      💡 Kéo khung <b>HOST</b> bên trái để di chuyển · Kéo góc <b>⤡</b> để thu phóng
+                    </span>
+                    <div className="flex gap-1 font-black">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWebcamRect({
+                            ...webcamRect,
+                            shape: 'circle',
+                            h: Math.round(webcamRect.w * (9 / 16) * 10) / 10,
+                          })
+                        }
+                        className={`px-2 py-1 rounded ${
+                          webcamRect.shape === 'circle'
+                            ? 'bg-rose-500 text-white'
+                            : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        Tròn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWebcamRect({ ...webcamRect, shape: 'rounded', h: 20 })}
+                        className={`px-2 py-1 rounded ${
+                          webcamRect.shape === 'rounded'
+                            ? 'bg-rose-500 text-white'
+                            : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        Bo góc
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWebcamRect({ x: 4, y: 63, w: 28, h: 16, shape: 'circle' })
+                        }
+                        className="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
             {/* 1. Kết nối Livestream (TikTok LIVE & Facebook Live chuẩn npc-action-live) */}
             <section className="rounded-2xl bg-slate-900/90 border border-white/10 p-4 flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
