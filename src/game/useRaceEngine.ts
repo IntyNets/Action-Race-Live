@@ -317,7 +317,27 @@ export function useRaceEngine() {
   const savedUsersRef = useRef<Map<string, UserProfile>>(new Map());
   const [savedUsers, setSavedUsers] = useState<UserProfile[]>([]);
   const followersRef = useRef<Set<string>>(new Set());
+  const hostUserIdsRef = useRef<Set<string>>(new Set());
+  /** Người chơi từng tham gia đua rồi bị out do rời live (không tương tác quá thời gian AFK) */
+  const departedRacersRef = useRef<Map<string, { nickname: string; departedAt: number }>>(new Map());
+  /** Tránh MC chào lặp cùng 1 khán giả trong vòng 3 phút */
+  const greetedViewersRef = useRef<Map<string, number>>(new Map());
   const lastNeedFollowVoiceAtRef = useRef<number>(0);
+  const lastWelcomeVoiceAtRef = useRef<number>(0);
+  const lastReturnVoiceAtRef = useRef<number>(0);
+  const lastFollowVoiceAtRef = useRef<number>(0);
+  /** Thời gian tự động cho nhân vật rời cuộc đua khi không còn tương tác / rời live (mặc định 300s = 5 phút; 0 = tắt) */
+  const afkTimeoutSecRef = useRef<number>(300);
+  const [afkTimeoutSec, setAfkTimeoutSecState] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('afkTimeoutSec'));
+      if (Number.isFinite(saved) && saved >= 0 && saved <= 3600) {
+        afkTimeoutSecRef.current = saved;
+        return saved;
+      }
+    } catch {}
+    return 300;
+  });
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({
     connected: false,
     connecting: false,
@@ -762,6 +782,7 @@ export function useRaceEngine() {
       webcamEnabled: webcamEnabledRef.current,
       webcamRect: webcamRectRef.current,
       footerBanner: footerBannerRef.current,
+      afkTimeoutSec: afkTimeoutSecRef.current,
       racers: racersList,
       spectators: Array.from(spectatorsRef.current.values()),
     };
@@ -896,6 +917,13 @@ export function useRaceEngine() {
         footerBannerRef.current = fb;
         setFooterBannerState(fb);
       }
+    }
+    if (
+      typeof snap.afkTimeoutSec === 'number' &&
+      snap.afkTimeoutSec !== afkTimeoutSecRef.current
+    ) {
+      afkTimeoutSecRef.current = snap.afkTimeoutSec;
+      setAfkTimeoutSecState(snap.afkTimeoutSec);
     }
     if (typeof snap.timer === 'number') {
       timerRef.current = snap.timer;
@@ -1228,82 +1256,28 @@ export function useRaceEngine() {
     }) => {
       followersRef.current.add(payload.userId);
       if (payload.username) followersRef.current.add(payload.username);
-      addSpectator(payload.userId, payload.nickname, payload.avatar);
+      departedRacersRef.current.delete(payload.userId);
+      if (payload.username) departedRacersRef.current.delete(payload.username);
+
+      const existing = racersRef.current.get(payload.userId);
+      if (existing) {
+        existing.lastInteractAt = performance.now();
+        pushFeed(`➕ ${payload.nickname} đã Follow kênh!`, 'join');
+        return;
+      }
+
       playJoinSfx();
       pushFeed(
-        `➕ ${payload.nickname} đã Follow kênh! Nhắn "join" để vào đường đua ngay!`,
+        `➕ ${payload.nickname} vừa Follow kênh & tự động vào đường đua ngay!`,
         'join',
       );
-    },
-    [pushFeed],
-  );
-
-  const handleChat = useCallback(
-    (payload: {
-      userId: string;
-      username: string;
-      nickname: string;
-      avatar: string;
-      comment: string;
-      isFollower?: boolean;
-      platform?: 'tiktok' | 'facebook';
-    }) => {
-      if (payload.isFollower) {
-        followersRef.current.add(payload.userId);
-        if (payload.username) followersRef.current.add(payload.username);
-      }
-
-      const existingRacer = racersRef.current.get(payload.userId);
-      // Nếu người chơi ĐÃ có mặt trên đường đua -> bình luận giúp tăng tốc (+TỐC)
-      if (existingRacer && phaseRef.current !== 'podium') {
-        const now = performance.now();
-        if (now - existingRacer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
-          existingRacer.lastChatBoostAt = now;
-          applyBoost(existingRacer, 'chat', 1800, '💬 +TỐC');
-          pushRaceSync(true);
-        }
-        return;
-      }
-
-      // Quy tắc vào game: người chơi phải nhắn "join" VÀ đã Follow kênh (đã Follow từ trước hoặc vừa Follow đều được)
-      const commentTrim = String(payload.comment || '').trim();
-      const wantsJoin = /(?:^|\s)[!/#]?join(?:\s|$)/i.test(commentTrim);
-      if (!wantsJoin) {
-        // Người xem chưa join game -> đứng cổ vũ ở khu khán giả 2 bên đường đua!
-        addSpectator(payload.userId, payload.nickname, payload.avatar);
-        return;
-      }
-
-      const savedProf =
-        savedUsersRef.current.get(payload.userId) ||
-        savedUsersRef.current.get(payload.username);
-      const hasFollowed = Boolean(
-        payload.isFollower ||
-          followersRef.current.has(payload.userId) ||
-          (payload.username && followersRef.current.has(payload.username)) ||
-          savedProf?.isFollower ||
-          payload.platform === 'facebook',
-      );
-
-      if (!hasFollowed) {
-        addSpectator(payload.userId, payload.nickname, payload.avatar);
-        pushFeed(
-          `🔒 ${payload.nickname} ơi, hãy Follow kênh trước rồi nhắn "join" để vào đua nhé!`,
-          'system',
+      const nowMs = Date.now();
+      if (nowMs - lastFollowVoiceAtRef.current > 4500) {
+        lastFollowVoiceAtRef.current = nowMs;
+        speakCommentator(
+          `Cảm ơn bạn ${payload.nickname} đã Follow kênh! Nhân vật của bạn đã chính thức vào đường đua rồi nhé!`,
         );
-        const nowMs = Date.now();
-        if (nowMs - lastNeedFollowVoiceAtRef.current > 4800) {
-          lastNeedFollowVoiceAtRef.current = nowMs;
-          speakCommentator(
-            `Bạn ${payload.nickname} ơi, hãy bấm Follow kênh trước rồi nhắn chữ join để vào đường đua cùng cả nhà nhé!`,
-          );
-        }
-        return;
       }
-
-      // Đủ điều kiện (Đã Follow + nhắn "join") -> cho vào đường đua hoặc xếp hàng ván mới!
-      followersRef.current.add(payload.userId);
-      if (payload.username) followersRef.current.add(payload.username);
 
       if (phaseRef.current === 'podium') {
         queueForNextRound({
@@ -1326,7 +1300,98 @@ export function useRaceEngine() {
       );
       pushRaceSync(true);
     },
-    [applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
+    [ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
+  );
+
+  const handleChat = useCallback(
+    (payload: {
+      userId: string;
+      username: string;
+      nickname: string;
+      avatar: string;
+      comment: string;
+      isFollower?: boolean;
+      platform?: 'tiktok' | 'facebook';
+    }) => {
+      if (payload.isFollower) {
+        followersRef.current.add(payload.userId);
+        if (payload.username) followersRef.current.add(payload.username);
+      }
+
+      const existingRacer = racersRef.current.get(payload.userId);
+      // Nếu người chơi ĐÃ có mặt trên đường đua -> cập nhật tương tác & bình luận giúp tăng tốc (+TỐC)
+      if (existingRacer) {
+        existingRacer.lastInteractAt = performance.now();
+        if (phaseRef.current !== 'podium') {
+          const now = performance.now();
+          if (now - existingRacer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
+            existingRacer.lastChatBoostAt = now;
+            applyBoost(existingRacer, 'chat', 1800, '💬 +TỐC');
+            pushRaceSync(true);
+          }
+        }
+        return;
+      }
+
+      // Luật vào đua mới: chỉ cần đã Follow kênh rồi thì nhắn BẤT KỲ 1 tin nhắn nào cũng được vào đua ngay!
+      const commentTrim = String(payload.comment || '').trim();
+      if (!commentTrim) return;
+
+      const savedProf =
+        savedUsersRef.current.get(payload.userId) ||
+        savedUsersRef.current.get(payload.username);
+      const hasFollowed = Boolean(
+        payload.isFollower ||
+          followersRef.current.has(payload.userId) ||
+          (payload.username && followersRef.current.has(payload.username)) ||
+          savedProf?.isFollower ||
+          payload.platform === 'facebook',
+      );
+
+      if (!hasFollowed) {
+        addSpectator(payload.userId, payload.nickname, payload.avatar);
+        pushFeed(
+          `🔒 ${payload.nickname} ơi, bấm Follow kênh là vào đua ngay (hoặc đã Follow thì nhắn bất kỳ 1 tin nhé)!`,
+          'system',
+        );
+        const nowMs = Date.now();
+        if (nowMs - lastNeedFollowVoiceAtRef.current > 5500) {
+          lastNeedFollowVoiceAtRef.current = nowMs;
+          speakCommentator(
+            `Bạn ${payload.nickname} ơi, hãy bấm Follow kênh là nhân vật sẽ tự vào đường đua ngay cùng cả nhà nhé!`,
+          );
+        }
+        return;
+      }
+
+      // Đã Follow + nhắn 1 tin bất kỳ -> cho vào đường đua hoặc xếp hàng ván mới!
+      followersRef.current.add(payload.userId);
+      if (payload.username) followersRef.current.add(payload.username);
+      departedRacersRef.current.delete(payload.userId);
+      if (payload.username) departedRacersRef.current.delete(payload.username);
+
+      if (phaseRef.current === 'podium') {
+        queueForNextRound({
+          userId: payload.userId,
+          username: payload.username,
+          nickname: payload.nickname,
+          avatar: payload.avatar,
+          coins: 0,
+        });
+        return;
+      }
+
+      ensureRacer(
+        payload.userId,
+        payload.username,
+        payload.nickname,
+        payload.avatar,
+        false,
+        payload.platform || 'tiktok',
+      );
+      pushRaceSync(true);
+    },
+    [addSpectator, applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
   );
 
   const handleLike = useCallback(
@@ -1675,6 +1740,9 @@ export function useRaceEngine() {
           const nextBanner = { ...DEFAULT_FOOTER_BANNER, ...value } as FooterBannerConfig;
           footerBannerRef.current = nextBanner;
           setFooterBannerState(nextBanner);
+        } else if (action === 'setAfkTimeout' && typeof value === 'number') {
+          afkTimeoutSecRef.current = value;
+          setAfkTimeoutSecState(value);
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -1747,27 +1815,65 @@ export function useRaceEngine() {
       } else if (type === 'member') {
         const uid = String(data.userId || data.username || data.nickname || 'viewer');
         const uname = String(data.username || data.userId || 'viewer');
+        const nick = String(data.nickname || data.username || 'Khán giả');
         if (data.isFollower) {
           followersRef.current.add(uid);
           if (uname) followersRef.current.add(uname);
         }
-        // Chỉ tự động cho Chủ Phòng (isHost) vào vạch xuất phát khi kết nối TikTok; khán giả mới vào đứng cổ vũ bên lề đường!
+        // Chủ phòng (isHost) luôn được giữ trên đường đua và không bao giờ bị out AFK
         if (data.isHost) {
+          hostUserIdsRef.current.add(uid);
+          if (uname) hostUserIdsRef.current.add(uname);
           handleChat({
             userId: uid,
             username: uname,
-            nickname: String(data.nickname || data.username || 'Chủ phòng'),
+            nickname: nick || 'Chủ phòng',
             avatar: String(data.avatar || ''),
             comment: 'join',
             isFollower: true,
             platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
           });
         } else {
-          addSpectator(
-            uid,
-            String(data.nickname || data.username || 'Khán giả'),
-            String(data.avatar || ''),
-          );
+          const activeRacer = racersRef.current.get(uid);
+          if (activeRacer) {
+            // Tay đua vẫn đang xem live -> làm mới thời gian hoạt động
+            activeRacer.lastInteractAt = performance.now();
+          } else {
+            addSpectator(uid, nick, String(data.avatar || ''));
+            const nowMs = Date.now();
+            const wasDeparted =
+              departedRacersRef.current.has(uid) || departedRacersRef.current.has(uname);
+
+            if (wasDeparted) {
+              // Người chơi từng bị out vì rời live nay quay lại -> MC chào và nhắc vào lại đường đua!
+              departedRacersRef.current.delete(uid);
+              departedRacersRef.current.delete(uname);
+              pushFeed(
+                `👋 Chào mừng ${nick} quay lại phiên live! Nhắn 1 tin bất kỳ để chạy tiếp nhé!`,
+                'join',
+              );
+              if (nowMs - lastReturnVoiceAtRef.current > 6000) {
+                lastReturnVoiceAtRef.current = nowMs;
+                speakCommentator(
+                  `Chào mừng bạn ${nick} đã quay trở lại phiên live! Hãy nhắn một tin bất kỳ để nhân vật vào lại đường đua chạy tiếp nhé!`,
+                );
+              }
+            } else {
+              // Khán giả mới vào phòng -> MC chào và hướng dẫn cách vào game (có chống spam)
+              const lastGreet = greetedViewersRef.current.get(uid) || 0;
+              if (nowMs - lastGreet > 180_000 && nowMs - lastWelcomeVoiceAtRef.current > 12_000) {
+                greetedViewersRef.current.set(uid, nowMs);
+                lastWelcomeVoiceAtRef.current = nowMs;
+                if (greetedViewersRef.current.size > 300) {
+                  const firstKey = greetedViewersRef.current.keys().next().value;
+                  if (firstKey) greetedViewersRef.current.delete(firstKey);
+                }
+                speakCommentator(
+                  `Xin chào bạn ${nick} mới vào phòng live! Chỉ cần bấm Follow kênh, hoặc đã Follow rồi thì nhắn một tin bất kỳ là nhân vật sẽ vào đường đua ngay nhé!`,
+                );
+              }
+            }
+          }
         }
       } else if (type === 'like') {
         handleLike({
@@ -2627,6 +2733,43 @@ export function useRaceEngine() {
     [postControl],
   );
 
+  // ---------- Tự động cho nhân vật rời cuộc đua khi người chơi rời live / không tương tác quá ngưỡng AFK ----------
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const limitSec = afkTimeoutSecRef.current;
+      if (limitSec <= 0) return;
+      const limitMs = limitSec * 1000;
+      const nowPerf = performance.now();
+      const map = racersRef.current;
+      let removedAny = false;
+
+      for (const [id, r] of map.entries()) {
+        if (r.isBot) continue;
+        if (hostUserIdsRef.current.has(id) || hostUserIdsRef.current.has(r.username)) continue;
+        if (nowPerf - r.lastInteractAt >= limitMs) {
+          map.delete(id);
+          departedRacersRef.current.set(id, { nickname: r.nickname, departedAt: Date.now() });
+          if (r.username) {
+            departedRacersRef.current.set(r.username, { nickname: r.nickname, departedAt: Date.now() });
+          }
+          if (departedRacersRef.current.size > 400) {
+            const oldest = departedRacersRef.current.keys().next().value;
+            if (oldest) departedRacersRef.current.delete(oldest);
+          }
+          const mins = Math.max(1, Math.round(limitSec / 60));
+          pushFeed(`👋 ${r.nickname} tạm rời đường đua (không tương tác ${mins} phút)`, 'system');
+          removedAny = true;
+        }
+      }
+
+      if (removedAny) {
+        fillBotsIfNeeded();
+        pushRaceSync(true);
+      }
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [fillBotsIfNeeded, pushFeed, pushRaceSync]);
+
   const changeFooterBanner = useCallback(
     (next: FooterBannerConfig) => {
       footerBannerRef.current = next;
@@ -2635,6 +2778,20 @@ export function useRaceEngine() {
         localStorage.setItem('footerBanner', JSON.stringify(next));
       } catch {}
       postControl('setFooterBanner', next);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
+  const changeAfkTimeoutSec = useCallback(
+    (sec: number) => {
+      const clean = Math.max(0, Math.min(3600, Math.round(sec)));
+      afkTimeoutSecRef.current = clean;
+      setAfkTimeoutSecState(clean);
+      try {
+        localStorage.setItem('afkTimeoutSec', String(clean));
+      } catch {}
+      postControl('setAfkTimeout', clean);
       pushRaceSync(true);
     },
     [postControl, pushRaceSync],
@@ -2728,6 +2885,8 @@ export function useRaceEngine() {
     setBroadcastMode: changeBroadcastMode,
     footerBanner,
     setFooterBanner: changeFooterBanner,
+    afkTimeoutSec,
+    setAfkTimeoutSec: changeAfkTimeoutSec,
     reportStageFps,
     stepPhysics,
     connectTikTok,

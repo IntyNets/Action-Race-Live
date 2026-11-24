@@ -33,7 +33,7 @@ export interface FooterBannerConfig {
 }
 
 export const DEFAULT_FOOTER_BANNER: FooterBannerConfig = {
-  text: '➕ Follow kênh + 💬 Nhắn join: Vào đua · ❤️ Tim: Sprint · 🎁 Quà: 🎒/🚀/🐉 + 🐾 Pet VIP',
+  text: '➕ Follow kênh hoặc nhắn bất kỳ để vào đua · ❤️ Tim: Sprint · 🎁 Quà: 🎒/🚀/🐉 + 🐾 Pet VIP',
   fontSize: 9.5,
   x: 2.5,
   y: 93.2,

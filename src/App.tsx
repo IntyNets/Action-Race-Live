@@ -94,6 +94,8 @@ export default function App() {
     setBroadcastMode,
     footerBanner,
     setFooterBanner,
+    afkTimeoutSec,
+    setAfkTimeoutSec,
     reportStageFps,
   } = engine;
 
@@ -1846,6 +1848,42 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Tự động cho nhân vật rời đường đua khi người chơi rời phiên live (không tương tác quá ngưỡng AFK) */}
+              <div className="flex flex-col gap-1.5 bg-slate-950/70 rounded-xl p-3 border border-white/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-200">
+                    👋 Tự động Out nhân vật khi rời Live (không tương tác):
+                  </span>
+                  <span className="text-[10.5px] font-bold text-amber-300">
+                    {afkTimeoutSec === 0 ? 'Đang tắt' : `${Math.round(afkTimeoutSec / 60)} phút`}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { sec: 180, label: '3 phút (Đông người)' },
+                    { sec: 300, label: '5 phút ⭐ Khuyến nghị' },
+                    { sec: 600, label: '10 phút (Thoải mái)' },
+                    { sec: 0, label: 'Tắt' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.sec}
+                      type="button"
+                      onClick={() => setAfkTimeoutSec(opt.sec)}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black transition ${
+                        afkTimeoutSec === opt.sec
+                          ? 'bg-amber-400 text-slate-950'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10.5px] text-slate-400">
+                  Khi người chơi bị Out quay lại phiên live, MC sẽ tự động chào và nhắc nhắn 1 tin bất kỳ để vào lại đường đua.
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5 text-xs font-bold">
