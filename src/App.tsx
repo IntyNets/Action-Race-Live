@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Check,
   Clock,
@@ -19,6 +19,7 @@ import { Race3DCanvas } from './game/Race3DCanvas';
 import { IS_BROWSER_SOURCE, IS_STAGE, useRaceEngine } from './game/useRaceEngine';
 import { setAudioSettings } from './audio/raceAudio';
 import { CIRCUIT_TRACK, MAPS, getMapLapKm } from './game/trackCurve';
+import { DEFAULT_FOOTER_BANNER } from './game/raceTypes';
 import { HostWebcamPip } from './live/HostWebcamPip';
 import {
   BROADCAST_OUTPUT_MODES,
@@ -91,6 +92,8 @@ export default function App() {
     triggerTtsTest,
     broadcastMode,
     setBroadcastMode,
+    footerBanner,
+    setFooterBanner,
     reportStageFps,
   } = engine;
 
@@ -268,6 +271,49 @@ export default function App() {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
     } catch { }
+  };
+
+  const footerBannerElRef = useRef<HTMLDivElement | null>(null);
+  const startFooterBannerDrag = (
+    e: React.PointerEvent<HTMLDivElement>,
+    mode: 'move' | 'resize',
+  ) => {
+    if (IS_STAGE) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = footerBannerElRef.current;
+    const parent = (el?.offsetParent as HTMLElement | null) || el?.parentElement;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const init = { ...footerBanner };
+
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - startX) / rect.width) * 100;
+      const dyPct = ((ev.clientY - startY) / rect.height) * 100;
+      if (mode === 'move') {
+        const nextX = Math.max(0, Math.min(100 - init.w, Math.round((init.x + dxPct) * 10) / 10));
+        const nextY = Math.max(0, Math.min(96, Math.round((init.y + dyPct) * 10) / 10));
+        setFooterBanner({ ...init, x: nextX, y: nextY });
+      } else {
+        const nextW = Math.max(
+          25,
+          Math.min(100 - init.x, Math.round((init.w + dxPct) * 10) / 10),
+        );
+        setFooterBanner({ ...init, w: nextW });
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   };
 
   const phaseMeta = {
@@ -642,9 +688,9 @@ export default function App() {
         </div>
       )}
 
-      {/* ==================== BOTTOM HUD (Thẻ nhân vật đang quay giống ảnh tham chiếu + hướng dẫn gọn, không hiện text MC gây rối) ==================== */}
+      {/* ==================== BOTTOM HUD (Thẻ nhân vật đang quay giống ảnh tham chiếu) ==================== */}
       <div
-        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent ${IS_STAGE ? 'pb-12' : 'pb-2.5'
+        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent ${IS_STAGE ? 'pb-14' : 'pb-12'
           }`}
       >
         {/* Các thẻ sự kiện tương tác gọn gàng (tối đa 1 dòng nổi bật nhất) */}
@@ -738,11 +784,39 @@ export default function App() {
             </div>
           </div>
         )}
-
-        <div className="rounded-lg bg-slate-950/65 border border-white/10 backdrop-blur-sm px-2 py-1 text-center text-[9.5px] font-bold text-slate-200">
-          ➕ Follow kênh + 💬 Nhắn <span className="text-emerald-300 font-black">join</span>: Vào đua · ❤️ Tim: Sprint · 🎁 Quà: 🎒/🚀/🐉 + 🐾 Pet VIP
-        </div>
       </div>
+
+      {/* ==================== THANH THÔNG BÁO / HƯỚNG DẪN (Kéo di chuyển & sửa chữ, cỡ chữ trên Dashboard) ==================== */}
+      {footerBanner.visible && (
+        <div
+          ref={footerBannerElRef}
+          onPointerDown={!IS_STAGE ? (e) => startFooterBannerDrag(e, 'move') : undefined}
+          style={{
+            left: `${footerBanner.x}%`,
+            top: `${footerBanner.y}%`,
+            width: `${footerBanner.w}%`,
+            fontSize: `${footerBanner.fontSize}px`,
+            lineHeight: 1.35,
+          }}
+          title={!IS_STAGE ? 'Kéo để di chuyển vị trí thanh hướng dẫn' : undefined}
+          className={`absolute z-30 rounded-lg bg-slate-950/75 backdrop-blur-sm px-2.5 py-1 text-center font-bold text-slate-100 whitespace-pre-line break-words select-none shadow-lg ${
+            !IS_STAGE
+              ? 'pointer-events-auto cursor-grab active:cursor-grabbing border border-dashed border-amber-400/75 hover:border-amber-300'
+              : 'pointer-events-none border border-white/15'
+          }`}
+        >
+          {footerBanner.text}
+          {!IS_STAGE && (
+            <div
+              onPointerDown={(e) => startFooterBannerDrag(e, 'resize')}
+              title="Kéo để thay đổi độ rộng"
+              className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize flex items-center justify-center text-[9px] text-amber-300/90 hover:bg-amber-400/20 rounded-r-lg"
+            >
+              ⋮
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -1183,9 +1257,95 @@ export default function App() {
                   </div>
                 )}
               </div>
-            </section>
+              {/* Tùy chỉnh Thanh Thông Báo / Hướng Dẫn (Kéo di chuyển trên Preview, sửa chữ & cỡ chữ) */}
+              <div className="rounded-xl bg-slate-950/75 border border-amber-400/35 p-3 flex flex-col gap-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-2 font-bold cursor-pointer text-amber-200">
+                    <input
+                      type="checkbox"
+                      checked={footerBanner.visible}
+                      onChange={(e) =>
+                        setFooterBanner({ ...footerBanner, visible: e.target.checked })
+                      }
+                    />
+                    <span>📝 Thanh Thông Báo / Hướng Dẫn (Kéo thả vị trí trên Preview)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFooterBanner({ ...DEFAULT_FOOTER_BANNER })}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-white/15 text-[10.5px] font-bold text-slate-200"
+                  >
+                    ↺ Mặc định
+                  </button>
+                </div>
 
-            {/* 1. Kết nối Livestream (TikTok LIVE & Facebook Live chuẩn npc-action-live) */}
+                {footerBanner.visible && (
+                  <>
+                    <textarea
+                      rows={2}
+                      value={footerBanner.text}
+                      onChange={(e) =>
+                        setFooterBanner({ ...footerBanner, text: e.target.value })
+                      }
+                      placeholder="Nhập nội dung thông báo / hướng dẫn hiển thị trên màn hình Live..."
+                      className="w-full rounded-lg bg-slate-900 border border-white/15 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-400 resize-y"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
+                      <label className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>🔤 Cỡ chữ</span>
+                          <span className="font-mono font-bold text-amber-300">
+                            {footerBanner.fontSize}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={8}
+                          max={22}
+                          step={0.5}
+                          value={footerBanner.fontSize}
+                          onChange={(e) =>
+                            setFooterBanner({
+                              ...footerBanner,
+                              fontSize: Number(e.target.value),
+                            })
+                          }
+                          className="accent-amber-400 cursor-pointer"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>↔️ Độ rộng khung</span>
+                          <span className="font-mono font-bold text-sky-300">
+                            {Math.round(footerBanner.w)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={25}
+                          max={98}
+                          step={1}
+                          value={footerBanner.w}
+                          onChange={(e) => {
+                            const nextW = Number(e.target.value);
+                            const clampedX = Math.min(footerBanner.x, 100 - nextW);
+                            setFooterBanner({
+                              ...footerBanner,
+                              w: nextW,
+                              x: Math.max(0, Math.round(clampedX * 10) / 10),
+                            });
+                          }}
+                          className="accent-sky-400 cursor-pointer"
+                        />
+                      </label>
+                    </div>
+                    <div className="text-[10.5px] text-amber-200/85">
+                      💡 Kéo trực tiếp thanh khung viền nét đứt màu vàng bên khung Preview trái để đổi vị trí ({footerBanner.x}%, {footerBanner.y}%) · Kéo mép phải <b>⋮</b> để chỉnh độ rộng.
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
             <section className="rounded-2xl bg-slate-900/90 border border-white/10 p-4 flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-black flex items-center gap-2">

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BoostKind,
+  DEFAULT_FOOTER_BANNER,
   DroneRect,
+  FooterBannerConfig,
   GraphicsQuality,
   LiveStatus,
   MatchPhase,
@@ -264,6 +266,30 @@ export function useRaceEngine() {
       }
     } catch {}
     return 'window_capture';
+  });
+  const footerBannerRef = useRef<FooterBannerConfig>(DEFAULT_FOOTER_BANNER);
+  const [footerBanner, setFooterBannerState] = useState<FooterBannerConfig>(() => {
+    try {
+      const saved = localStorage.getItem('footerBanner');
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (
+          p &&
+          typeof p.text === 'string' &&
+          typeof p.fontSize === 'number' &&
+          typeof p.x === 'number' &&
+          typeof p.y === 'number'
+        ) {
+          const merged: FooterBannerConfig = {
+            ...DEFAULT_FOOTER_BANNER,
+            ...p,
+          };
+          footerBannerRef.current = merged;
+          return merged;
+        }
+      }
+    } catch {}
+    return DEFAULT_FOOTER_BANNER;
   });
   const cameraModeRef = useRef<CameraModeOverride>('auto');
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
@@ -735,6 +761,7 @@ export function useRaceEngine() {
       aiCameraModes: aiCameraModesRef.current,
       webcamEnabled: webcamEnabledRef.current,
       webcamRect: webcamRectRef.current,
+      footerBanner: footerBannerRef.current,
       racers: racersList,
       spectators: Array.from(spectatorsRef.current.values()),
     };
@@ -848,6 +875,26 @@ export function useRaceEngine() {
       if (cur.x !== wr.x || cur.y !== wr.y || cur.w !== wr.w || cur.h !== wr.h || cur.shape !== wr.shape) {
         webcamRectRef.current = wr;
         setWebcamRectState(wr);
+      }
+    }
+    if (
+      snap.footerBanner &&
+      typeof snap.footerBanner.text === 'string' &&
+      typeof snap.footerBanner.x === 'number' &&
+      typeof snap.footerBanner.y === 'number'
+    ) {
+      const fb = { ...DEFAULT_FOOTER_BANNER, ...snap.footerBanner } as FooterBannerConfig;
+      const cur = footerBannerRef.current;
+      if (
+        cur.text !== fb.text ||
+        cur.fontSize !== fb.fontSize ||
+        cur.x !== fb.x ||
+        cur.y !== fb.y ||
+        cur.w !== fb.w ||
+        cur.visible !== fb.visible
+      ) {
+        footerBannerRef.current = fb;
+        setFooterBannerState(fb);
       }
     }
     if (typeof snap.timer === 'number') {
@@ -1618,6 +1665,16 @@ export function useRaceEngine() {
         ) {
           webcamRectRef.current = value as WebcamRect;
           setWebcamRectState(value as WebcamRect);
+        } else if (
+          action === 'setFooterBanner' &&
+          value &&
+          typeof value.text === 'string' &&
+          typeof value.x === 'number' &&
+          typeof value.y === 'number'
+        ) {
+          const nextBanner = { ...DEFAULT_FOOTER_BANNER, ...value } as FooterBannerConfig;
+          footerBannerRef.current = nextBanner;
+          setFooterBannerState(nextBanner);
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -2570,6 +2627,19 @@ export function useRaceEngine() {
     [postControl],
   );
 
+  const changeFooterBanner = useCallback(
+    (next: FooterBannerConfig) => {
+      footerBannerRef.current = next;
+      setFooterBannerState(next);
+      try {
+        localStorage.setItem('footerBanner', JSON.stringify(next));
+      } catch {}
+      postControl('setFooterBanner', next);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
   const handleWebcamStatusChange = useCallback((st: WebcamStatus) => {
     webcamStatusRef.current = st;
     setWebcamStatusState(st);
@@ -2656,6 +2726,8 @@ export function useRaceEngine() {
     triggerTtsTest,
     broadcastMode,
     setBroadcastMode: changeBroadcastMode,
+    footerBanner,
+    setFooterBanner: changeFooterBanner,
     reportStageFps,
     stepPhysics,
     connectTikTok,

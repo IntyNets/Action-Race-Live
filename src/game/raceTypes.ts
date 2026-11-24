@@ -17,6 +17,30 @@ export interface DroneRect {
   h: number;
 }
 
+export interface FooterBannerConfig {
+  /** Nội dung thanh hướng dẫn / thông báo */
+  text: string;
+  /** Cỡ chữ tính bằng px (8..22) */
+  fontSize: number;
+  /** Phần trăm từ mép trái khung 9:16 (0..90) */
+  x: number;
+  /** Phần trăm từ mép trên khung 9:16 (0..96) */
+  y: number;
+  /** Chiều rộng theo % khung 9:16 (25..98) */
+  w: number;
+  /** Bật / tắt hiển thị */
+  visible: boolean;
+}
+
+export const DEFAULT_FOOTER_BANNER: FooterBannerConfig = {
+  text: '➕ Follow kênh + 💬 Nhắn join: Vào đua · ❤️ Tim: Sprint · 🎁 Quà: 🎒/🚀/🐉 + 🐾 Pet VIP',
+  fontSize: 9.5,
+  x: 2.5,
+  y: 93.2,
+  w: 95,
+  visible: true,
+};
+
 export interface UserProfile {
   userId: string;
   username: string;

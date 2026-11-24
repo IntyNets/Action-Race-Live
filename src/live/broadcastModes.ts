@@ -123,3 +123,4 @@ export function detectStageOutputModeFromUrl(): BroadcastOutputModeId {
   } catch {}
   return 'window_capture';
 }
+
