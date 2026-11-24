@@ -16,10 +16,15 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Race3DCanvas } from './game/Race3DCanvas';
-import { IS_STAGE, useRaceEngine } from './game/useRaceEngine';
+import { IS_BROWSER_SOURCE, IS_STAGE, useRaceEngine } from './game/useRaceEngine';
 import { setAudioSettings } from './audio/raceAudio';
 import { CIRCUIT_TRACK, MAPS, getMapLapKm } from './game/trackCurve';
 import { HostWebcamPip } from './live/HostWebcamPip';
+import {
+  BROADCAST_OUTPUT_MODES,
+  buildStageUrl,
+  getBroadcastModeMeta,
+} from './live/broadcastModes';
 
 export default function App() {
   const engine = useRaceEngine();
@@ -84,6 +89,8 @@ export default function App() {
     stageOnline,
     ttsTestResult,
     triggerTtsTest,
+    broadcastMode,
+    setBroadcastMode,
     reportStageFps,
   } = engine;
 
@@ -139,7 +146,7 @@ export default function App() {
     setPlatformTab(p);
     try {
       localStorage.setItem('livePlatformTab', p);
-    } catch {}
+    } catch { }
     setConnMsg('');
   };
 
@@ -149,7 +156,7 @@ export default function App() {
     setConnMsg('');
     try {
       localStorage.setItem('tiktokUser', tiktokIdInput.trim());
-    } catch {}
+    } catch { }
     const r = await connectTikTok(tiktokIdInput.trim());
     setConnMsg(r?.success ? '✅ Đã kết nối TikTok LIVE' : r?.error || 'Không kết nối được TikTok');
     setBusy(false);
@@ -163,7 +170,7 @@ export default function App() {
       localStorage.setItem('fbVideoId', fbVideoId);
       localStorage.setItem('fbAccessToken', fbToken);
       localStorage.setItem('fbMode', useMode);
-    } catch {}
+    } catch { }
     const r = await connectFacebook({
       videoId: fbVideoId,
       accessToken: useMode === 'graph' ? fbToken : '',
@@ -208,8 +215,21 @@ export default function App() {
     }
   };
 
-  const stageUrl =
-    typeof window !== 'undefined' ? `${window.location.origin}/?view=stage` : '/?view=stage';
+  const activeOutputMeta = useMemo(() => getBroadcastModeMeta(broadcastMode), [broadcastMode]);
+  const effectiveOutputMode =
+    stageOnline && stageHealth?.outputMode ? stageHealth.outputMode : broadcastMode;
+  const checklistProfile = useMemo(
+    () => getBroadcastModeMeta(effectiveOutputMode).checklistProfile,
+    [effectiveOutputMode],
+  );
+  const stageUrl = useMemo(
+    () =>
+      buildStageUrl(
+        typeof window !== 'undefined' ? window.location.origin : '',
+        broadcastMode === 'rtmp_stream' ? 'window_capture' : broadcastMode,
+      ),
+    [broadcastMode],
+  );
 
   const minimapPath = useMemo(() => {
     const pts = CIRCUIT_TRACK.minimapPoints;
@@ -307,21 +327,33 @@ export default function App() {
         <div className="absolute inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-6">
           <div className="max-w-[320px] w-full rounded-2xl bg-slate-900/95 border-2 border-rose-500/80 p-5 text-center shadow-[0_0_50px_rgba(244,63,94,0.45)] flex flex-col items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-rose-600/20 border border-rose-400/60 flex items-center justify-center text-2xl">
-              🔴
+              {IS_BROWSER_SOURCE ? '🌐' : '🔴'}
             </div>
             <div className="text-sm font-black text-white">
-              Sẵn Sàng Phát Sóng Trực Tiếp (9:16)
+              {IS_BROWSER_SOURCE
+                ? 'Browser Source — Mở Khóa Âm Thanh'
+                : 'Sẵn Sàng Phát Sóng Trực Tiếp (9:16)'}
             </div>
             <p className="text-[11px] text-slate-300 leading-relaxed">
-              Nhấn nút bên dưới để mở khóa <b>Audio Master Bus</b> (BGM + SFX + MC TTS), kích hoạt{' '}
-              <b>Screen Wake Lock</b> và bắt đầu gửi nhịp tim sức khỏe về Bảng Điều Khiển.
+              {IS_BROWSER_SOURCE ? (
+                <>
+                  Trình duyệt nhúng đang tạm khóa tự động phát tiếng. Bấm <b>Interact (Tương tác)</b>{' '}
+                  trong OBS / TikTok LIVE Studio rồi nhấn nút bên dưới 1 lần để mở{' '}
+                  <b>Audio Master Bus</b>.
+                </>
+              ) : (
+                <>
+                  Nhấn nút bên dưới để mở khóa <b>Audio Master Bus</b> (BGM + SFX + MC TTS), kích
+                  hoạt <b>Screen Wake Lock</b> và bắt đầu gửi nhịp tim sức khỏe về Bảng Điều Khiển.
+                </>
+              )}
             </p>
             <button
               type="button"
               onClick={() => void startStageLiveMode()}
               className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:brightness-110 text-slate-950 text-xs font-black tracking-wide shadow-lg transition cursor-pointer"
             >
-              🔴 BẮT ĐẦU CHẾ ĐỘ LIVE
+              {IS_BROWSER_SOURCE ? '🔊 MỞ KHÓA ÂM THANH & VÀO LIVE' : '🔴 BẮT ĐẦU CHẾ ĐỘ LIVE'}
             </button>
           </div>
         </div>
@@ -386,17 +418,16 @@ export default function App() {
 
               {/* Danh sách tay đua siêu gọn xếp dọc ngay dưới Mini Map (phong cách ảnh tham chiếu) */}
               {top5.length > 0 && (
-                <div className="pointer-events-auto w-[124px] flex flex-col gap-[2px] max-h-[172px] overflow-y-auto pr-0.5">
+                <div className="pointer-events-auto w-[124px] flex flex-col gap-[2px] overflow-y-auto pr-0.5">
                   {top5.map((r) => (
                     <div
                       key={r.id}
-                      className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-md backdrop-blur-sm text-[8.5px] leading-tight shadow ${
-                        r.rank === 1
+                      className={`flex items-center gap-1 px-1.5 py-[1.5px] rounded-md backdrop-blur-sm text-[8.5px] leading-tight shadow ${r.rank === 1
                           ? 'bg-amber-500/80 text-slate-950 font-black border border-yellow-200/70'
                           : focusedRacer?.id === r.id
                             ? 'bg-sky-500/75 text-white font-bold border border-sky-200/70'
                             : 'bg-slate-950/60 text-white/95 border border-white/10'
-                      }`}
+                        }`}
                     >
                       <span className="w-3 text-center font-black shrink-0">{r.rank}</span>
                       <img
@@ -447,29 +478,25 @@ export default function App() {
               {/* Chỉ báo MC đang bình luận bằng sóng âm (không hiện text dài) */}
               <div
                 title={isMcSpeaking ? 'MC đang bình luận trực tiếp' : 'MC đang sẵn sàng'}
-                className={`flex items-center gap-1 px-2 py-1 rounded-full border backdrop-blur-md transition-all ${
-                  isMcSpeaking
+                className={`flex items-center gap-1 px-2 py-1 rounded-full border backdrop-blur-md transition-all ${isMcSpeaking
                     ? 'bg-amber-400/90 border-yellow-100 text-slate-950 shadow-[0_0_12px_rgba(251,191,36,0.8)]'
                     : 'bg-slate-950/65 border-white/15 text-slate-300'
-                }`}
+                  }`}
               >
                 <span className="text-[10px]">🎙️</span>
                 <span className="text-[9px] font-black tracking-wide">MC</span>
                 <span className="flex items-end gap-[1.5px] h-2.5">
                   <span
-                    className={`w-[2px] rounded-full ${
-                      isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
-                    }`}
+                    className={`w-[2px] rounded-full ${isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
+                      }`}
                   />
                   <span
-                    className={`w-[2px] rounded-full ${
-                      isMcSpeaking ? 'h-1.5 bg-slate-950 animate-bounce' : 'h-1.5 bg-slate-500'
-                    }`}
+                    className={`w-[2px] rounded-full ${isMcSpeaking ? 'h-1.5 bg-slate-950 animate-bounce' : 'h-1.5 bg-slate-500'
+                      }`}
                   />
                   <span
-                    className={`w-[2px] rounded-full ${
-                      isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
-                    }`}
+                    className={`w-[2px] rounded-full ${isMcSpeaking ? 'h-2.5 bg-slate-950 animate-pulse' : 'h-1 bg-slate-500'
+                      }`}
                   />
                 </span>
               </div>
@@ -478,16 +505,15 @@ export default function App() {
                 <Users className="w-3 h-3 text-sky-400" />
                 <span>{racerCount}</span>
               </div>
-              {IS_STAGE && (
+              {IS_STAGE && !IS_BROWSER_SOURCE && (
                 <>
                   <button
                     onClick={() => setWebcamEnabled(!webcamEnabled)}
                     title={webcamEnabled ? 'Tắt Webcam Chủ Phòng' : 'Bật Webcam Chủ Phòng (chỉ hình, không mic)'}
-                    className={`p-1 rounded-lg border transition text-[11px] leading-none ${
-                      webcamEnabled
+                    className={`p-1 rounded-lg border transition text-[11px] leading-none ${webcamEnabled
                         ? 'bg-rose-600/90 border-rose-300 text-white'
                         : 'bg-slate-950/70 border-white/15 text-slate-300 hover:bg-slate-800'
-                    }`}
+                      }`}
                   >
                     📷
                   </button>
@@ -506,15 +532,14 @@ export default function App() {
               )}
             </div>
             <span
-              className={`px-1.5 py-0.5 rounded-md text-[8.5px] font-black border shadow ${
-                cameraHud.state === 'FRONT_TRACKING'
+              className={`px-1.5 py-0.5 rounded-md text-[8.5px] font-black border shadow ${cameraHud.state === 'FRONT_TRACKING'
                   ? 'bg-amber-400/90 text-slate-950 border-yellow-100'
                   : cameraHud.state === 'SIDE_TRACKING'
                     ? 'bg-cyan-400/90 text-slate-950 border-cyan-100'
                     : cameraHud.state === 'OVERVIEW'
                       ? 'bg-indigo-500/90 text-white border-indigo-200'
                       : 'bg-slate-950/65 text-sky-300 border-sky-400/30'
-              }`}
+                }`}
             >
               {cameraHud.badgeText}
             </span>
@@ -527,12 +552,12 @@ export default function App() {
         <div className="pointer-events-none absolute top-28 left-3 right-3 z-30 flex justify-center">
           <div
             className={`animate-vip-pop w-full rounded-2xl px-3 py-2 border-2 shadow-2xl backdrop-blur-md flex items-center gap-2.5 ${vipBanner.tier === 'dragon'
-                ? 'bg-gradient-to-r from-amber-500/95 via-orange-600/95 to-rose-600/95 border-yellow-200 shadow-[0_0_40px_rgba(251,191,36,0.9)]'
-                : vipBanner.tier === 'superman'
-                  ? 'bg-gradient-to-r from-cyan-500/95 via-sky-600/95 to-indigo-600/95 border-cyan-100 shadow-[0_0_36px_rgba(56,189,248,0.9)]'
-                  : vipBanner.tier === 'rocket'
-                    ? 'bg-gradient-to-r from-rose-600/95 to-fuchsia-600/95 border-pink-200 shadow-[0_0_28px_rgba(244,63,94,0.8)]'
-                    : 'bg-gradient-to-r from-sky-600/95 to-indigo-600/95 border-sky-200'
+              ? 'bg-gradient-to-r from-amber-500/95 via-orange-600/95 to-rose-600/95 border-yellow-200 shadow-[0_0_40px_rgba(251,191,36,0.9)]'
+              : vipBanner.tier === 'superman'
+                ? 'bg-gradient-to-r from-cyan-500/95 via-sky-600/95 to-indigo-600/95 border-cyan-100 shadow-[0_0_36px_rgba(56,189,248,0.9)]'
+                : vipBanner.tier === 'rocket'
+                  ? 'bg-gradient-to-r from-rose-600/95 to-fuchsia-600/95 border-pink-200 shadow-[0_0_28px_rgba(244,63,94,0.8)]'
+                  : 'bg-gradient-to-r from-sky-600/95 to-indigo-600/95 border-sky-200'
               }`}
           >
             <img
@@ -577,34 +602,31 @@ export default function App() {
                 return (
                   <div
                     key={w.id}
-                    className={`flex items-center gap-1 px-1.5 py-1 rounded-lg border ${
-                      isFirst
+                    className={`flex items-center gap-1 px-1.5 py-1 rounded-lg border ${isFirst
                         ? 'bg-amber-400/25 border-amber-300/70'
                         : isSecond
                           ? 'bg-slate-200/15 border-slate-300/40'
                           : 'bg-orange-500/15 border-orange-400/40'
-                    }`}
+                      }`}
                   >
                     <img
                       src={w.avatar}
                       alt={w.nickname}
-                      className={`w-5 h-5 rounded-full object-cover border shrink-0 ${
-                        isFirst
+                      className={`w-5 h-5 rounded-full object-cover border shrink-0 ${isFirst
                           ? 'border-amber-300'
                           : isSecond
                             ? 'border-slate-200'
                             : 'border-orange-300'
-                      }`}
+                        }`}
                     />
                     <div className="min-w-0 flex-1 leading-tight">
                       <div
-                        className={`text-[8px] font-black ${
-                          isFirst
+                        className={`text-[8px] font-black ${isFirst
                             ? 'text-amber-300'
                             : isSecond
                               ? 'text-slate-200'
                               : 'text-orange-300'
-                        }`}
+                          }`}
                       >
                         {isFirst ? '👑 #1' : isSecond ? '🥈 #2' : '🥉 #3'}
                       </div>
@@ -622,9 +644,8 @@ export default function App() {
 
       {/* ==================== BOTTOM HUD (Thẻ nhân vật đang quay giống ảnh tham chiếu + hướng dẫn gọn, không hiện text MC gây rối) ==================== */}
       <div
-        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent ${
-          IS_STAGE ? 'pb-12' : 'pb-2.5'
-        }`}
+        className={`pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-3 pt-2 flex flex-col gap-1.5 bg-gradient-to-t from-slate-950/90 via-slate-950/35 to-transparent ${IS_STAGE ? 'pb-12' : 'pb-2.5'
+          }`}
       >
         {/* Các thẻ sự kiện tương tác gọn gàng (tối đa 1 dòng nổi bật nhất) */}
         {feed.length > 0 && (
@@ -632,8 +653,7 @@ export default function App() {
             {feed.slice(0, 1).map((item) => (
               <div
                 key={item.id}
-                className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold backdrop-blur-md border shadow max-w-full truncate ${
-                  item.tone === 'dragon'
+                className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold backdrop-blur-md border shadow max-w-full truncate ${item.tone === 'dragon'
                     ? 'bg-amber-500/90 border-yellow-200 text-slate-950'
                     : item.tone === 'rocket'
                       ? 'bg-rose-600/90 border-pink-300 text-white'
@@ -642,7 +662,7 @@ export default function App() {
                         : item.tone === 'sprint'
                           ? 'bg-cyan-500/85 border-cyan-200 text-slate-950'
                           : 'bg-slate-950/75 border-white/20 text-slate-100'
-                }`}
+                  }`}
               >
                 {item.text}
               </div>
@@ -696,15 +716,14 @@ export default function App() {
               </div>
             </div>
             <div
-              className={`shrink-0 text-right font-black leading-none italic drop-shadow ${
-                focusedRacer.rank === 1
+              className={`shrink-0 text-right font-black leading-none italic drop-shadow ${focusedRacer.rank === 1
                   ? 'text-2xl text-amber-300'
                   : focusedRacer.rank === 2
                     ? 'text-2xl text-slate-200'
                     : focusedRacer.rank === 3
                       ? 'text-2xl text-sky-300'
                       : 'text-xl text-cyan-300'
-              }`}
+                }`}
             >
               {focusedRacer.rank}
               <span className="text-[11px] not-italic ml-0.5">
@@ -760,16 +779,16 @@ export default function App() {
           >
             {copiedLink ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" /> Đã copy Link Live
+                <Check className="w-3.5 h-3.5 text-emerald-400" /> Đã copy Link {activeOutputMeta.shortLabel}
               </>
             ) : (
               <>
-                <Copy className="w-3.5 h-3.5 text-sky-400" /> Copy Link OBS
+                <Copy className="w-3.5 h-3.5 text-sky-400" /> Copy Link {activeOutputMeta.shortLabel}
               </>
             )}
           </button>
           <a
-            href="/?view=stage"
+            href={stageUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 text-xs font-black shadow transition"
@@ -795,37 +814,143 @@ export default function App() {
         {/* Cột Phải: Các thẻ điều khiển tách biệt */}
         <div className="flex-1 min-h-0 overflow-y-auto p-4 lg:p-6">
           <div className="max-w-2xl mx-auto flex flex-col gap-4">
-            {/* 0. Giám Sát Sức Khỏe Phiên Live & Pre-Live Checklist (Dữ Liệu Thực Tế 100%) */}
+            {/* 0A. Chọn Chế Độ Nguồn Phát (Output Mode — Mở rộng linh hoạt cho Window Capture, Browser Source, URL Stream/RTMP...) */}
+            <section className="rounded-2xl bg-slate-900/90 border border-sky-500/35 p-4 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-black text-sky-300 flex items-center gap-2">
+                  📡 Chế Độ Nguồn Phát (Output Mode)
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/15 text-sky-200 border border-sky-400/35">
+                  {activeOutputMeta.icon} {activeOutputMeta.shortLabel}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {BROADCAST_OUTPUT_MODES.map((m) => {
+                  const selected = broadcastMode === m.id;
+                  const comingSoon = m.status === 'coming_soon';
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setBroadcastMode(m.id)}
+                      className={`text-left rounded-xl p-2.5 border transition flex flex-col gap-1 ${
+                        selected
+                          ? comingSoon
+                            ? 'bg-amber-950/45 border-amber-400/70 shadow-[0_0_16px_rgba(251,191,36,0.2)]'
+                            : 'bg-sky-950/60 border-sky-400 shadow-[0_0_16px_rgba(56,189,248,0.25)]'
+                          : 'bg-slate-950/70 border-white/10 hover:border-white/25'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-black text-white">
+                          {m.icon} {m.shortLabel}
+                        </span>
+                        {m.badge && (
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-black shrink-0 ${
+                              comingSoon
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
+                            }`}
+                          >
+                            {m.badge}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 leading-snug line-clamp-2">
+                        {m.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Chi tiết cấu hình & URL tương ứng với chế độ nguồn phát đang chọn */}
+              <div className="rounded-xl bg-slate-950/80 border border-white/10 p-3 flex flex-col gap-2 text-[11px]">
+                <div className="text-slate-200 leading-relaxed">{activeOutputMeta.description}</div>
+
+                {activeOutputMeta.status === 'available' ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="flex-1 min-w-0 truncate rounded-lg bg-slate-900 border border-sky-400/30 px-2.5 py-1.5 text-[11px] font-mono text-sky-300">
+                      {stageUrl}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void copyStageUrl()}
+                      className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-black transition shrink-0"
+                    >
+                      {copiedLink ? '✅ Đã copy' : '📋 Copy Link'}
+                    </button>
+                    {broadcastMode === 'window_capture' && (
+                      <a
+                        href={stageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-amber-400 hover:brightness-110 text-slate-950 text-[11px] font-black transition shrink-0"
+                      >
+                        ↗ Mở Stage
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-amber-950/40 border border-amber-400/40 px-3 py-2 text-amber-200">
+                    🛠️ <b>Đang chuẩn bị cho Giai đoạn 3 (RTMP / URL Stream):</b> Nhánh{' '}
+                    <code>MediaStreamAudioDestinationNode</code> đã được đấu nối sẵn trong{' '}
+                    <code>LiveRuntime</code>. Khi kích hoạt Giai đoạn 3, bạn chỉ cần nhập{' '}
+                    <b>Server URL</b> + <b>Stream Key</b> ngay tại đây để đẩy luồng trực tiếp.
+                  </div>
+                )}
+
+                {activeOutputMeta.recommendedSize && (
+                  <div className="text-[10.5px] text-slate-400">
+                    📐 Khuyến nghị: <b className="text-slate-200">{activeOutputMeta.recommendedSize}</b>
+                  </div>
+                )}
+
+                <ul className="list-disc pl-4 space-y-0.5 text-[10.5px] text-slate-300">
+                  {activeOutputMeta.setupSteps.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+
+            {/* 0B. Giám Sát Sức Khỏe Phiên Live & Pre-Live Checklist (Dữ Liệu Thực Tế 100%) */}
             <section className="rounded-2xl bg-slate-900/90 border border-emerald-500/35 p-4 flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-black text-emerald-300 flex items-center gap-2">
                   🛡️ Giám Sát Sức Khỏe Live & Pre-Live Checklist
                 </h2>
                 <span
-                  className={`px-2 py-0.5 rounded-full text-[10.5px] font-black border ${
-                    !stageOnline
+                  className={`px-2 py-0.5 rounded-full text-[10.5px] font-black border ${!stageOnline
                       ? 'bg-slate-800 text-slate-400 border-white/15'
-                      : stageHealth?.visibilityState === 'hidden' || (stageHealth?.lowFpsStreakSec ?? 0) >= 4
+                      : (checklistProfile.needsVisibleTabCheck &&
+                          stageHealth?.visibilityState === 'hidden') ||
+                        (stageHealth?.lowFpsStreakSec ?? 0) >= 4
                         ? 'bg-rose-600/90 text-white border-rose-200 animate-pulse'
                         : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'
-                  }`}
+                    }`}
                 >
                   {!stageOnline
                     ? '⚪ Chưa mở trang Stage (/?view=stage)'
-                    : stageHealth?.visibilityState === 'hidden'
+                    : checklistProfile.needsVisibleTabCheck &&
+                        stageHealth?.visibilityState === 'hidden'
                       ? '🚨 STAGE ĐANG BỊ ẨN / MINIMIZE'
                       : (stageHealth?.lowFpsStreakSec ?? 0) >= 4
                         ? `🚨 TỤT FPS LIÊN TỤC (${stageHealth?.fps} FPS)`
-                        : `🟢 STAGE ỔN ĐỊNH · ${stageHealth?.fps ?? 0} FPS`}
+                        : `🟢 ${getBroadcastModeMeta(effectiveOutputMode).shortLabel} · ${stageHealth?.fps ?? 0} FPS`}
                 </span>
               </div>
 
-              {/* Cảnh báo đỏ nếu Stage bị ẩn hoặc tụt FPS kéo dài */}
-              {stageOnline && stageHealth?.visibilityState === 'hidden' && (
-                <div className="rounded-xl bg-rose-950/70 border border-rose-400/70 px-3 py-2 text-xs font-bold text-rose-200">
-                  ⚠️ Cửa sổ <code>/?view=stage</code> đang bị ẩn hoặc thu nhỏ (<code>hidden</code>). Trình duyệt sẽ bóp FPS và TikTok LIVE Studio có thể bị đứng hình — hãy giữ cửa sổ Stage luôn hiển thị!
-                </div>
-              )}
+              {/* Cảnh báo đỏ nếu Stage bị ẩn (Window Capture) hoặc tụt FPS kéo dài */}
+              {stageOnline &&
+                checklistProfile.needsVisibleTabCheck &&
+                stageHealth?.visibilityState === 'hidden' && (
+                  <div className="rounded-xl bg-rose-950/70 border border-rose-400/70 px-3 py-2 text-xs font-bold text-rose-200">
+                    ⚠️ Cửa sổ <code>/?view=stage</code> đang bị ẩn hoặc thu nhỏ (<code>hidden</code>). Trình duyệt sẽ bóp FPS và TikTok LIVE Studio có thể bị đứng hình — hãy giữ cửa sổ Stage luôn hiển thị!
+                  </div>
+                )}
               {stageOnline && (stageHealth?.lowFpsStreakSec ?? 0) >= 4 && (
                 <div className="rounded-xl bg-amber-950/70 border border-amber-400/70 px-3 py-2 text-xs font-bold text-amber-200">
                   ⚠️ FPS dưới 15 liên tục {stageHealth?.lowFpsStreakSec} giây ({stageHealth?.fps} FPS). Hãy hạ Chất Lượng Đồ Họa xuống mức <b>Thấp</b> hoặc <b>Trung Bình</b>!
@@ -856,7 +981,11 @@ export default function App() {
                 <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
                   <span className="text-slate-300">1. Stage hoạt động</span>
                   <span className={stageOnline ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
-                    {stageOnline ? '✅ Heartbeat OK' : '⚠️ Chưa mở'}
+                    {stageOnline
+                      ? stageHealth?.outputMode === 'browser_source'
+                        ? '✅ OK (Browser Source)'
+                        : '✅ Heartbeat OK'
+                      : '⚠️ Chưa mở'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
@@ -865,16 +994,20 @@ export default function App() {
                     className={
                       !stageOnline
                         ? 'text-slate-400'
-                        : stageHealth?.visibilityState === 'visible'
+                        : !checklistProfile.needsVisibleTabCheck
                           ? 'text-emerald-400 font-bold'
-                          : 'text-rose-400 font-bold'
+                          : stageHealth?.visibilityState === 'visible'
+                            ? 'text-emerald-400 font-bold'
+                            : 'text-rose-400 font-bold'
                     }
                   >
                     {!stageOnline
                       ? '❔ Chưa xác định'
-                      : stageHealth?.visibilityState === 'visible'
-                        ? '✅ Visible'
-                        : '🚨 Hidden'}
+                      : !checklistProfile.needsVisibleTabCheck
+                        ? '✅ CEF Render'
+                        : stageHealth?.visibilityState === 'visible'
+                          ? '✅ Visible'
+                          : '🚨 Hidden'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
@@ -901,18 +1034,22 @@ export default function App() {
                     className={
                       !stageOnline
                         ? 'text-slate-400'
-                        : stageHealth?.wakeLockStatus === 'active'
-                          ? 'text-emerald-400 font-bold'
-                          : 'text-slate-300'
+                        : !checklistProfile.needsWakeLock
+                          ? 'text-sky-300 font-bold'
+                          : stageHealth?.wakeLockStatus === 'active'
+                            ? 'text-emerald-400 font-bold'
+                            : 'text-slate-300'
                     }
                   >
                     {!stageOnline
                       ? '❔ Chưa xác định'
-                      : stageHealth?.wakeLockStatus === 'active'
-                        ? '✅ Đang giữ sáng'
-                        : stageHealth?.wakeLockStatus === 'unsupported'
-                          ? 'ℹ️ Không hỗ trợ'
-                          : '⚠️ Chưa bật'}
+                      : !checklistProfile.needsWakeLock
+                        ? 'ℹ️ Live Studio / OBS giữ'
+                        : stageHealth?.wakeLockStatus === 'active'
+                          ? '✅ Đang giữ sáng'
+                          : stageHealth?.wakeLockStatus === 'unsupported'
+                            ? 'ℹ️ Không hỗ trợ'
+                            : '⚠️ Chưa bật'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
@@ -952,17 +1089,19 @@ export default function App() {
                           : 'text-slate-400'
                     }
                   >
-                    {!stageOnline
-                      ? webcamEnabled
-                        ? '⏳ Đang chờ Stage'
-                        : '⏸️ Tắt (Mặc định)'
-                      : stageHealth?.webcamState === 'active'
-                        ? '✅ Track đang chạy'
-                        : stageHealth?.webcamState === 'lost'
-                          ? '🚨 Mất tín hiệu'
-                          : stageHealth?.webcamState === 'denied'
-                            ? '🚨 Chưa cấp quyền'
-                            : '⏸️ Tắt (Mặc định)'}
+                    {!checklistProfile.webcamInWebRecommended && !webcamEnabled
+                      ? 'ℹ️ Add Camera trong OBS/LS'
+                      : !stageOnline
+                        ? webcamEnabled
+                          ? '⏳ Đang chờ Stage'
+                          : '⏸️ Tắt (Mặc định)'
+                        : stageHealth?.webcamState === 'active'
+                          ? '✅ Track đang chạy'
+                          : stageHealth?.webcamState === 'lost'
+                            ? '🚨 Mất tín hiệu'
+                            : stageHealth?.webcamState === 'denied'
+                              ? '🚨 Chưa cấp quyền'
+                              : '⏸️ Tắt (Mặc định)'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-slate-950/70 border border-white/10 px-2.5 py-1.5">
@@ -971,13 +1110,12 @@ export default function App() {
                     type="button"
                     onClick={() => void triggerTtsTest()}
                     disabled={ttsTestResult.status === 'testing'}
-                    className={`px-2 py-0.5 rounded font-black text-[10px] transition ${
-                      ttsTestResult.status === 'ok'
+                    className={`px-2 py-0.5 rounded font-black text-[10px] transition ${ttsTestResult.status === 'ok'
                         ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/50'
                         : ttsTestResult.status === 'error'
                           ? 'bg-rose-500/25 text-rose-300 border border-rose-400/50'
                           : 'bg-sky-600 hover:bg-sky-500 text-white'
-                    }`}
+                      }`}
                   >
                     {ttsTestResult.status === 'testing'
                       ? '⏳ Đang test...'
@@ -1015,22 +1153,20 @@ export default function App() {
                             h: Math.round(webcamRect.w * (9 / 16) * 10) / 10,
                           })
                         }
-                        className={`px-2 py-1 rounded ${
-                          webcamRect.shape === 'circle'
+                        className={`px-2 py-1 rounded ${webcamRect.shape === 'circle'
                             ? 'bg-rose-500 text-white'
                             : 'bg-slate-800 text-slate-300'
-                        }`}
+                          }`}
                       >
                         Tròn
                       </button>
                       <button
                         type="button"
                         onClick={() => setWebcamRect({ ...webcamRect, shape: 'rounded', h: 20 })}
-                        className={`px-2 py-1 rounded ${
-                          webcamRect.shape === 'rounded'
+                        className={`px-2 py-1 rounded ${webcamRect.shape === 'rounded'
                             ? 'bg-rose-500 text-white'
                             : 'bg-slate-800 text-slate-300'
-                        }`}
+                          }`}
                       >
                         Bo góc
                       </button>
@@ -1070,34 +1206,30 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => switchPlatform('tiktok')}
-                  className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-black transition ${
-                    platformTab === 'tiktok'
+                  className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-black transition ${platformTab === 'tiktok'
                       ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow-lg shadow-rose-950/50'
                       : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                  }`}
+                    }`}
                 >
                   <span>🎵 TikTok LIVE</span>
                   <span
-                    className={`h-2.5 w-2.5 rounded-full ${
-                      liveStatus.connected ? 'bg-emerald-400 ring-2 ring-emerald-200' : 'bg-slate-500'
-                    }`}
+                    className={`h-2.5 w-2.5 rounded-full ${liveStatus.connected ? 'bg-emerald-400 ring-2 ring-emerald-200' : 'bg-slate-500'
+                      }`}
                   />
                 </button>
 
                 <button
                   type="button"
                   onClick={() => switchPlatform('facebook')}
-                  className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-black transition ${
-                    platformTab === 'facebook'
+                  className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-black transition ${platformTab === 'facebook'
                       ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-950/50'
                       : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                  }`}
+                    }`}
                 >
                   <span>🔵 Facebook Live</span>
                   <span
-                    className={`h-2.5 w-2.5 rounded-full ${
-                      fb?.isConnected ? 'bg-emerald-400 ring-2 ring-emerald-200' : 'bg-slate-500'
-                    }`}
+                    className={`h-2.5 w-2.5 rounded-full ${fb?.isConnected ? 'bg-emerald-400 ring-2 ring-emerald-200' : 'bg-slate-500'
+                      }`}
                   />
                 </button>
               </div>
@@ -1151,13 +1283,12 @@ export default function App() {
                         setFbMode('bridge');
                         try {
                           localStorage.setItem('fbMode', 'bridge');
-                        } catch {}
+                        } catch { }
                       }}
-                      className={`rounded-lg px-2.5 py-1.5 font-bold transition ${
-                        fbMode === 'bridge'
+                      className={`rounded-lg px-2.5 py-1.5 font-bold transition ${fbMode === 'bridge'
                           ? 'bg-blue-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
+                        }`}
                     >
                       ⚡ Cầu nối Trình duyệt (Khuyên dùng - Không cần Token)
                     </button>
@@ -1167,13 +1298,12 @@ export default function App() {
                         setFbMode('graph');
                         try {
                           localStorage.setItem('fbMode', 'graph');
-                        } catch {}
+                        } catch { }
                       }}
-                      className={`rounded-lg px-2.5 py-1.5 font-bold transition ${
-                        fbMode === 'graph'
+                      className={`rounded-lg px-2.5 py-1.5 font-bold transition ${fbMode === 'graph'
                           ? 'bg-blue-600 text-white'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
+                        }`}
                     >
                       🔑 Facebook Graph API (Dùng Access Token)
                     </button>
@@ -1242,7 +1372,7 @@ export default function App() {
                                 setConnMsg('🚀 Đã mở trình duyệt tự động nạp sẵn Tiện ích chạy ngầm (Không cần bấm F12)!');
                                 return;
                               }
-                            } catch {}
+                            } catch { }
                             openFbLiveWindow();
                             setConnMsg(
                               '💡 Để chạy ngầm 100% không cần bấm F12: hãy nhấp đúp file MO-FACEBOOK-TU-DONG.bat hoặc tải gói Extension (.zip) bên cạnh nạp vào chrome://extensions.',
@@ -1483,11 +1613,10 @@ export default function App() {
                       <button
                         key={m.id}
                         onClick={() => changeMap(m.id)}
-                        className={`text-left rounded-xl p-2.5 border transition ${
-                          selected
+                        className={`text-left rounded-xl p-2.5 border transition ${selected
                             ? 'bg-amber-400/20 border-amber-300 shadow-[0_0_16px_rgba(251,191,36,0.2)]'
                             : 'bg-slate-900/80 border-white/10 hover:bg-slate-800'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between gap-1">
                           <span className="text-xs font-black text-white">
@@ -1521,8 +1650,8 @@ export default function App() {
                       key={n}
                       onClick={() => setTotalLaps(n)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${totalLaps === n
-                          ? 'bg-amber-400 text-slate-950'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                         }`}
                     >
                       {n} vòng
@@ -1548,11 +1677,10 @@ export default function App() {
                     <button
                       key={opt.sec}
                       onClick={() => setRaceDuration(opt.sec)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black transition ${
-                        raceDuration === opt.sec
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-black transition ${raceDuration === opt.sec
                           ? 'bg-emerald-400 text-slate-950'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
+                        }`}
                     >
                       {opt.label}
                     </button>
@@ -1621,17 +1749,15 @@ export default function App() {
                         key={m.id}
                         type="button"
                         onClick={() => setCameraMode(m.id)}
-                        className={`rounded-xl p-2 text-left border transition flex flex-col justify-between ${
-                          active
+                        className={`rounded-xl p-2 text-left border transition flex flex-col justify-between ${active
                             ? 'bg-amber-400 text-slate-950 border-yellow-100 shadow-[0_0_16px_rgba(251,191,36,0.45)]'
                             : 'bg-slate-900/90 text-slate-200 border-white/10 hover:bg-slate-800'
-                        }`}
+                          }`}
                       >
                         <div>{m.label}</div>
                         <div
-                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${
-                            active ? 'text-slate-900' : 'text-slate-400'
-                          }`}
+                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${active ? 'text-slate-900' : 'text-slate-400'
+                            }`}
                         >
                           {m.desc}
                         </div>
@@ -1662,11 +1788,10 @@ export default function App() {
                         return (
                           <label
                             key={opt.key}
-                            className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border cursor-pointer transition ${
-                              checked
+                            className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border cursor-pointer transition ${checked
                                 ? 'bg-amber-400/20 border-amber-300/70 text-amber-100'
                                 : 'bg-slate-900/70 border-white/10 text-slate-400 hover:bg-slate-800'
-                            }`}
+                              }`}
                           >
                             <span className="truncate">{opt.label}</span>
                             <input
@@ -1716,17 +1841,15 @@ export default function App() {
                         key={q.id}
                         type="button"
                         onClick={() => setGraphicsQuality(q.id)}
-                        className={`rounded-xl p-2 text-left border transition ${
-                          active
+                        className={`rounded-xl p-2 text-left border transition ${active
                             ? 'bg-emerald-400 text-slate-950 border-emerald-100 shadow-[0_0_14px_rgba(52,211,153,0.4)]'
                             : 'bg-slate-900/90 text-slate-200 border-white/10 hover:bg-slate-800'
-                        }`}
+                          }`}
                       >
                         <div>{q.label}</div>
                         <div
-                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${
-                            active ? 'text-slate-900' : 'text-slate-400'
-                          }`}
+                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${active ? 'text-slate-900' : 'text-slate-400'
+                            }`}
                         >
                           {q.desc}
                         </div>

@@ -196,6 +196,7 @@ const emptyLiveStatus = (fb: FacebookLiveStats = emptyFbStats()): LiveStatusStat
 let tiktokConn: InstanceType<typeof TikTokLiveConnection> | null = null;
 let liveStatus: LiveStatusState = emptyLiveStatus();
 let latestRaceSnapshot: Record<string, unknown> | null = null;
+let latestStageHealth: Record<string, unknown> | null = null;
 
 // ---------- SSE (/api/tiktok/events giống npc-action-live) + WebSocket (/ws) ----------
 const server = http.createServer(app);
@@ -250,6 +251,12 @@ app.get('/api/tiktok/events', (req, res) => {
   if (latestRaceSnapshot) {
     res.write(`event: raceSync\ndata: ${JSON.stringify(latestRaceSnapshot)}\n\n`);
   }
+  if (
+    latestStageHealth &&
+    Date.now() - Number(latestStageHealth.timestamp || 0) < 5000
+  ) {
+    res.write(`event: stageHealth\ndata: ${JSON.stringify(latestStageHealth)}\n\n`);
+  }
   sseClients.push(res);
 
   const heartbeat = setInterval(() => {
@@ -274,6 +281,12 @@ wss.on('connection', (ws) => {
     if (latestRaceSnapshot) {
       ws.send(JSON.stringify({ type: 'raceSync', data: latestRaceSnapshot, ts: Date.now() }));
     }
+    if (
+      latestStageHealth &&
+      Date.now() - Number(latestStageHealth.timestamp || 0) < 5000
+    ) {
+      ws.send(JSON.stringify({ type: 'stageHealth', data: latestStageHealth, ts: Date.now() }));
+    }
   } catch {}
   ws.on('message', (raw) => {
     try {
@@ -281,6 +294,11 @@ wss.on('connection', (ws) => {
       if (msg?.type === 'raceSync' && msg.data && typeof msg.data === 'object') {
         latestRaceSnapshot = msg.data;
         broadcastWs('raceSync', msg.data);
+      } else if (msg?.type === 'stageHealth' && msg.data && typeof msg.data === 'object') {
+        latestStageHealth = { ...msg.data, transport: 'server' };
+        broadcastWs('stageHealth', latestStageHealth);
+      } else if (msg?.type === 'ttsTestResult' && msg.data && typeof msg.data === 'object') {
+        broadcastWs('ttsTestResult', msg.data);
       }
     } catch {}
   });
@@ -296,6 +314,26 @@ app.post('/api/race/sync', (req, res) => {
   }
   latestRaceSnapshot = snap;
   broadcastWs('raceSync', snap);
+  res.json({ success: true });
+});
+
+// Đồng bộ StageHealthMonitor qua server (hoạt động xuyên trình duyệt: Browser Source CEF <-> Chrome Dashboard)
+app.post('/api/stage/health', (req, res) => {
+  const snap = req.body;
+  if (!snap || typeof snap !== 'object') {
+    return res.status(400).json({ success: false });
+  }
+  latestStageHealth = { ...snap, transport: 'server' };
+  broadcastWs('stageHealth', latestStageHealth);
+  res.json({ success: true });
+});
+
+app.post('/api/stage/tts-test-result', (req, res) => {
+  const result = req.body;
+  if (!result || typeof result !== 'object') {
+    return res.status(400).json({ success: false });
+  }
+  broadcastWs('ttsTestResult', result);
   res.json({ success: true });
 });
 

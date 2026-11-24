@@ -1,4 +1,5 @@
 import { WakeLockStatus } from '../audio/liveRuntime';
+import { BroadcastOutputModeId } from './broadcastModes';
 
 export type WebcamStatus = 'off' | 'starting' | 'active' | 'lost' | 'denied';
 
@@ -11,6 +12,8 @@ export interface WebcamRect {
 }
 
 export interface StageHealthSnapshot {
+  outputMode: BroadcastOutputModeId;
+  transport?: 'broadcast' | 'server';
   fps: number;
   /** Số giây liên tục FPS dưới 15 (chỉ cảnh báo khi >= 4 giây liên tục) */
   lowFpsStreakSec: number;
@@ -49,3 +52,4 @@ export function openHealthChannel(): BroadcastChannel | null {
     return null;
   }
 }
+

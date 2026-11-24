@@ -48,11 +48,19 @@ import {
   WebcamStatus,
   openHealthChannel,
 } from '../live/stageHealth';
+import {
+  BroadcastOutputModeId,
+  detectStageOutputModeFromUrl,
+  isBroadcastOutputModeId,
+} from '../live/broadcastModes';
 
 // Phân tách Chế Độ Live (/?view=stage) và Bảng Điều Khiển (/) giống npc-action-live
 export const IS_STAGE =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('view') === 'stage';
+
+export const STAGE_OUTPUT_MODE: BroadcastOutputModeId = detectStageOutputModeFromUrl();
+export const IS_BROWSER_SOURCE = IS_STAGE && STAGE_OUTPUT_MODE === 'browser_source';
 
 const SHIRT_PALETTE = [
   0xef4444, 0xf97316, 0xeab308, 0x22c55e, 0x06b6d4,
@@ -242,10 +250,21 @@ export function useRaceEngine() {
   const [liveModeStarted, setLiveModeStarted] = useState<boolean>(false);
   const stageFpsRef = useRef<number>(60);
   const lowFpsStreakRef = useRef<number>(0);
+  const lastStageBeatAtRef = useRef<number>(0);
+  const ttsTestRunningRef = useRef<boolean>(false);
   const healthChannelRef = useRef<BroadcastChannel | null>(null);
   const [stageHealth, setStageHealth] = useState<StageHealthSnapshot | null>(null);
   const [stageOnline, setStageOnline] = useState<boolean>(false);
   const [ttsTestResult, setTtsTestResult] = useState<TtsTestResult>({ status: 'untested' });
+  const [broadcastMode, setBroadcastModeState] = useState<BroadcastOutputModeId>(() => {
+    try {
+      const saved = localStorage.getItem('broadcastOutputMode');
+      if (isBroadcastOutputModeId(saved)) {
+        return saved;
+      }
+    } catch {}
+    return 'window_capture';
+  });
   const cameraModeRef = useRef<CameraModeOverride>('auto');
   const [cameraMode, setCameraModeState] = useState<CameraModeOverride>('auto');
   const defaultAiModes: AiDirectorModes = {
@@ -1604,7 +1623,52 @@ export function useRaceEngine() {
           speakCommentator(value.trim(), true);
         } else if (action === 'setAudio' && value && IS_STAGE) {
           setAudioSettings(value);
+        } else if (action === 'requestTtsTest' && IS_STAGE) {
+          if (!ttsTestRunningRef.current) {
+            ttsTestRunningRef.current = true;
+            const testing: TtsTestResult = { status: 'testing' };
+            try {
+              healthChannelRef.current?.postMessage({ type: 'ttsTestResult', data: testing });
+            } catch {}
+            try {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: 'ttsTestResult', data: testing }));
+              }
+            } catch {}
+            void runTtsSelfTest()
+              .then((res) => {
+                const finalRes: TtsTestResult = {
+                  status: res.ok ? 'ok' : 'error',
+                  latencyMs: res.latencyMs,
+                  error: res.error,
+                  testedAt: Date.now(),
+                };
+                try {
+                  healthChannelRef.current?.postMessage({ type: 'ttsTestResult', data: finalRes });
+                } catch {}
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  try {
+                    wsRef.current.send(JSON.stringify({ type: 'ttsTestResult', data: finalRes }));
+                  } catch {}
+                } else {
+                  fetch('/api/stage/tts-test-result', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(finalRes),
+                  }).catch(() => {});
+                }
+              })
+              .finally(() => {
+                ttsTestRunningRef.current = false;
+              });
+          }
         }
+      } else if (type === 'stageHealth' && data && !IS_STAGE) {
+        lastStageBeatAtRef.current = Date.now();
+        setStageHealth(data as StageHealthSnapshot);
+        setStageOnline(true);
+      } else if (type === 'ttsTestResult' && data && !IS_STAGE) {
+        setTtsTestResult(data as TtsTestResult);
       } else if (type === 'chat') {
         handleChat({
           userId: String(data.userId || data.username || data.nickname || 'viewer'),
@@ -1679,6 +1743,8 @@ export function useRaceEngine() {
           'status',
           'users',
           'raceSync',
+          'stageHealth',
+          'ttsTestResult',
           'control',
           'chat',
           'member',
@@ -2329,11 +2395,26 @@ export function useRaceEngine() {
     [postControl],
   );
 
-  // ---------- StageHealthMonitor qua BroadcastChannel (giám sát FPS, visibilityState, AudioContext, Wake Lock, Webcam) ----------
+  // ---------- Tự động mở khóa Audio Master Bus khi chạy ở chế độ Browser Source (OBS / TikTok LIVE Studio CEF) ----------
+  useEffect(() => {
+    if (!IS_BROWSER_SOURCE) return;
+    let cancelled = false;
+    void liveRuntime.startLiveMode({ keepScreenAwake: false }).then(() => {
+      if (cancelled) return;
+      if (liveRuntime.getAudioState() === 'running') {
+        setLiveModeStarted(true);
+        startRaceBgm();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ---------- StageHealthMonitor 2 kênh: BroadcastChannel (cùng trình duyệt) + Server WS/SSE (xuyên trình duyệt cho Browser Source) ----------
   useEffect(() => {
     const ch = openHealthChannel();
     healthChannelRef.current = ch;
-    if (!ch) return;
 
     if (IS_STAGE) {
       const sendHeartbeat = () => {
@@ -2344,6 +2425,8 @@ export function useRaceEngine() {
           lowFpsStreakRef.current = 0;
         }
         const snap: StageHealthSnapshot = {
+          outputMode: STAGE_OUTPUT_MODE,
+          transport: 'broadcast',
           fps: fpsNow,
           lowFpsStreakSec: lowFpsStreakRef.current,
           visibilityState: document.visibilityState,
@@ -2356,33 +2439,57 @@ export function useRaceEngine() {
           timestamp: Date.now(),
         };
         setStageHealth(snap);
-        const msg: StageHealthMessage = { type: 'heartbeat', data: snap };
-        try {
-          ch.postMessage(msg);
-        } catch {}
-      };
-
-      const onMsg = (ev: MessageEvent<StageHealthMessage>) => {
-        if (ev.data?.type === 'requestTtsTest') {
-          const testing: TtsTestResult = { status: 'testing' };
+        if (ch) {
+          const msg: StageHealthMessage = { type: 'heartbeat', data: snap };
           try {
-            ch.postMessage({ type: 'ttsTestResult', data: testing });
+            ch.postMessage(msg);
           } catch {}
-          void runTtsSelfTest().then((res) => {
-            const finalRes: TtsTestResult = {
-              status: res.ok ? 'ok' : 'error',
-              latencyMs: res.latencyMs,
-              error: res.error,
-              testedAt: Date.now(),
-            };
-            try {
-              ch.postMessage({ type: 'ttsTestResult', data: finalRes });
-            } catch {}
-          });
+        }
+        // Đẩy đồng thời lên Server để Dashboard trên Chrome giám sát được cả Stage chạy trong Browser Source CEF
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          try {
+            wsRef.current.send(JSON.stringify({ type: 'stageHealth', data: snap }));
+          } catch {}
+        } else {
+          fetch('/api/stage/health', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snap),
+          }).catch(() => {});
         }
       };
 
-      ch.addEventListener('message', onMsg);
+      const onMsg = (ev: MessageEvent<StageHealthMessage>) => {
+        if (ev.data?.type === 'requestTtsTest' && !ttsTestRunningRef.current) {
+          ttsTestRunningRef.current = true;
+          const testing: TtsTestResult = { status: 'testing' };
+          try {
+            ch?.postMessage({ type: 'ttsTestResult', data: testing });
+          } catch {}
+          void runTtsSelfTest()
+            .then((res) => {
+              const finalRes: TtsTestResult = {
+                status: res.ok ? 'ok' : 'error',
+                latencyMs: res.latencyMs,
+                error: res.error,
+                testedAt: Date.now(),
+              };
+              try {
+                ch?.postMessage({ type: 'ttsTestResult', data: finalRes });
+              } catch {}
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                try {
+                  wsRef.current.send(JSON.stringify({ type: 'ttsTestResult', data: finalRes }));
+                } catch {}
+              }
+            })
+            .finally(() => {
+              ttsTestRunningRef.current = false;
+            });
+        }
+      };
+
+      ch?.addEventListener('message', onMsg);
       const onVis = () => sendHeartbeat();
       document.addEventListener('visibilitychange', onVis);
       sendHeartbeat();
@@ -2390,31 +2497,30 @@ export function useRaceEngine() {
       return () => {
         clearInterval(timer);
         document.removeEventListener('visibilitychange', onVis);
-        ch.removeEventListener('message', onMsg);
-        ch.close();
+        ch?.removeEventListener('message', onMsg);
+        ch?.close();
       };
     } else {
-      // Dashboard (/) nhận nhịp tim sức khỏe thực tế từ Stage (/?view=stage)
-      let lastBeat = 0;
+      // Dashboard (/) nhận nhịp tim sức khỏe thực tế từ Stage qua cả BroadcastChannel lẫn Server WS/SSE
       const onMsg = (ev: MessageEvent<StageHealthMessage>) => {
         if (ev.data?.type === 'heartbeat' && ev.data.data) {
-          lastBeat = Date.now();
+          lastStageBeatAtRef.current = Date.now();
           setStageHealth(ev.data.data);
           setStageOnline(true);
         } else if (ev.data?.type === 'ttsTestResult' && ev.data.data) {
           setTtsTestResult(ev.data.data);
         }
       };
-      ch.addEventListener('message', onMsg);
+      ch?.addEventListener('message', onMsg);
       const watchdog = window.setInterval(() => {
-        if (lastBeat > 0 && Date.now() - lastBeat > 3600) {
+        if (lastStageBeatAtRef.current > 0 && Date.now() - lastStageBeatAtRef.current > 3600) {
           setStageOnline(false);
         }
       }, 1000);
       return () => {
         clearInterval(watchdog);
-        ch.removeEventListener('message', onMsg);
-        ch.close();
+        ch?.removeEventListener('message', onMsg);
+        ch?.close();
       };
     }
   }, []);
@@ -2423,8 +2529,15 @@ export function useRaceEngine() {
     stageFpsRef.current = fpsVal;
   }, []);
 
+  const changeBroadcastMode = useCallback((mode: BroadcastOutputModeId) => {
+    setBroadcastModeState(mode);
+    try {
+      localStorage.setItem('broadcastOutputMode', mode);
+    } catch {}
+  }, []);
+
   const startStageLiveMode = useCallback(async () => {
-    await liveRuntime.startLiveMode({ keepScreenAwake: true });
+    await liveRuntime.startLiveMode({ keepScreenAwake: !IS_BROWSER_SOURCE });
     setLiveModeStarted(true);
     if (IS_STAGE) {
       startRaceBgm();
@@ -2474,8 +2587,9 @@ export function useRaceEngine() {
       });
       return;
     }
-    if (stageOnline && healthChannelRef.current) {
-      healthChannelRef.current.postMessage({ type: 'requestTtsTest' } as StageHealthMessage);
+    if (stageOnline) {
+      // Gửi qua server (/api/control) để hoạt động cả khi Stage chạy trong Browser Source CEF lẫn tab Chrome
+      postControl('requestTtsTest', Date.now());
     } else {
       // Nếu chưa mở Stage -> kiểm tra trực tiếp endpoint /api/tts trên Dashboard để xác nhận backend TTS sống
       const res = await runTtsSelfTest();
@@ -2486,7 +2600,7 @@ export function useRaceEngine() {
         testedAt: Date.now(),
       });
     }
-  }, [stageOnline]);
+  }, [postControl, stageOnline]);
 
   return {
     racersRef,
@@ -2540,6 +2654,8 @@ export function useRaceEngine() {
     stageOnline,
     ttsTestResult,
     triggerTtsTest,
+    broadcastMode,
+    setBroadcastMode: changeBroadcastMode,
     reportStageFps,
     stepPhysics,
     connectTikTok,
