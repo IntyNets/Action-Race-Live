@@ -6,6 +6,8 @@ export type BoostKind = 'none' | 'join' | 'chat' | 'sprint' | 'jetpack' | 'rocke
 
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
+export type TimeOfDayMode = 'realtime' | 'cycle' | 'dawn' | 'noon' | 'sunset' | 'night';
+
 export interface DroneRect {
   /** Phần trăm từ mép trái khung 9:16 (0..80) */
   x: number;
@@ -76,7 +78,7 @@ export interface RacerState {
   level: number;
   /** Điểm kinh nghiệm / tích lũy của người chơi */
   points: number;
-  /** Số lần vô địc
+  /** Số lần vô địch */
   wins: number;
   /** Tổng số trận đã tham gia */
   matches: number;

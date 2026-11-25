@@ -6,6 +6,7 @@ import {
   RACE_CONSTANTS,
   RacerState,
   SpectatorInfo,
+  TimeOfDayMode,
 } from './raceTypes';
 import {
   CIRCUIT_TRACK,
@@ -15,6 +16,15 @@ import {
   sampleCircuit,
 } from './trackCurve';
 import { CameraDirector } from './camera/CameraDirector';
+import {
+  buildTriangulatedRibbon,
+  buildTriangulatedTerrain,
+  create2KAsphaltPBR,
+  create2KGrassPBR,
+  createBallisticSparkSystem,
+  createJaggedLightningGroup,
+  createPhysicalSkyAndRealTimeSystem,
+} from './pbrEnvironmentAndVfx';
 
 interface Race3DCanvasProps {
   racersRef: React.MutableRefObject<Map<string, RacerState>>;
@@ -28,6 +38,7 @@ interface Race3DCanvasProps {
   onDroneRectChange?: (rect: DroneRect) => void;
   canEditDrone?: boolean;
   graphicsQuality?: GraphicsQuality;
+  timeOfDayMode?: TimeOfDayMode;
   onFpsSample?: (fps: number) => void;
 }
 
@@ -114,6 +125,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   onDroneRectChange,
   canEditDrone = false,
   graphicsQuality = 'medium',
+  timeOfDayMode = 'realtime',
   onFpsSample,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -133,6 +145,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   droneCamOnRef.current = droneCamOn;
   const graphicsQualityRef = useRef<GraphicsQuality>(graphicsQuality);
   graphicsQualityRef.current = graphicsQuality;
+  const timeOfDayModeRef = useRef<TimeOfDayMode>(timeOfDayMode);
+  timeOfDayModeRef.current = timeOfDayMode;
   const droneRectRef = useRef<DroneRect>(droneRect);
   droneRectRef.current = droneRect;
   const onFpsSampleRef = useRef(onFpsSample);
@@ -193,12 +207,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const dynamicImport = new Function('specifier', 'return import(specifier)') as (
           s: string,
         ) => Promise<any>;
-        const [THREE, gltfMod, dracoMod, skelMod, roomEnvMod] = await Promise.all([
+        const [THREE, gltfMod, dracoMod, skelMod, roomEnvMod, skyMod] = await Promise.all([
           dynamicImport('three'),
           dynamicImport('three/addons/loaders/GLTFLoader.js'),
           dynamicImport('three/addons/loaders/DRACOLoader.js'),
           dynamicImport('three/addons/utils/SkeletonUtils.js'),
           dynamicImport('three/addons/environments/RoomEnvironment.js'),
+          dynamicImport('three/addons/objects/Sky.js'),
         ]);
         if (cancelled) return;
 
@@ -206,13 +221,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const { DRACOLoader } = dracoMod;
         const SkeletonUtils = skelMod;
         const { RoomEnvironment } = roomEnvMod;
+        const { Sky } = skyMod;
 
-        // ---------- Renderer + RoomEnvironment PBR + Đổ Bóng Mềm Chân Thực (PCFSoftShadowMap) ----------
+        // ---------- Renderer + PBR/PBS/PBL + Đổ Bóng Độ Phân Giải Cao (PCFSoftShadowMap) ----------
         const renderer = new THREE.WebGLRenderer({
           antialias: true,
           powerPreference: 'high-performance',
         });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.35));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.4));
         renderer.setSize(container.clientWidth || 540, container.clientHeight || 960);
         renderer.shadowMap.enabled = graphicsQualityRef.current !== 'low';
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -222,10 +238,13 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         container.innerHTML = '';
         container.appendChild(renderer.domElement);
 
+        const maxAniso = Math.min(16, renderer.capabilities.getMaxAnisotropy?.() || 8);
+
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x93c5fd, 0.0036);
+        scene.fog = new THREE.FogExp2(0xcbd5e1, 0.0028);
 
         const pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader?.();
         const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
         scene.environment = envTex;
 
@@ -233,7 +252,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           52,
           (container.clientWidth || 540) / (container.clientHeight || 960),
           0.5,
-          480,
+          560,
         );
         const droneCamera = new THREE.PerspectiveCamera(46, 1, 1, 950);
         let droneCx = (CIRCUIT_TRACK.minX + CIRCUIT_TRACK.maxX) * 0.5;
@@ -245,64 +264,41 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         );
         let lastDroneSig = '';
 
-        // Sky Dome 3D Gradient
-        const makeSkyTexture = (
-          colors: [string, string, string, string, string] = [
-            '#0284c7',
-            '#38bdf8',
-            '#bae6fd',
-            '#fef08a',
-            '#fde68a',
-          ],
-        ) => {
-          const cv = document.createElement('canvas');
-          cv.width = 32;
-          cv.height = 256;
-          const ctx = cv.getContext('2d')!;
-          const grad = ctx.createLinearGradient(0, 0, 0, 256);
-          grad.addColorStop(0.0, colors[0]);
-          grad.addColorStop(0.45, colors[1]);
-          grad.addColorStop(0.75, colors[2]);
-          grad.addColorStop(0.92, colors[3]);
-          grad.addColorStop(1.0, colors[4]);
-          ctx.fillStyle = grad;
-          ctx.fillRect(0, 0, 32, 256);
-          const tex = new THREE.CanvasTexture(cv);
-          tex.colorSpace = THREE.SRGBColorSpace;
-          return tex;
-        };
-        const skyDome = new THREE.Mesh(
-          new THREE.SphereGeometry(320, 20, 14),
-          new THREE.MeshBasicMaterial({ map: makeSkyTexture(), side: THREE.BackSide, fog: false }),
+        // Hệ thống Bầu Trời Vật Lý (PBL Preetham Sky + Đĩa Mặt Trời/Trăng + Vòm Sao Đêm) theo thời gian thực
+        const realTimeSky = createPhysicalSkyAndRealTimeSystem(
+          THREE,
+          Sky,
+          renderer,
+          scene,
+          pmrem,
         );
-        scene.add(skyDome);
 
-        // Ánh sáng 3 điểm + Nguồn sáng Mặt Trời đổ bóng rõ nét cho nhân vật, cây cối, hoa cỏ & khán giả
-        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x166534, 0.78);
+        // Ánh sáng PBL + Nguồn sáng Mặt Trời đổ bóng theo đúng góc & độ cao thực tế (nguồn càng cao bóng càng sắc nét!)
+        const hemiLight = new THREE.HemisphereLight(0xbae6fd, 0x166534, 0.62);
         scene.add(hemiLight);
-        const sunLight = new THREE.DirectionalLight(0xfff7ed, 1.85);
-        sunLight.position.set(36, 58, -28);
+        const sunLight = new THREE.DirectionalLight(0xfffaf0, 2.85);
+        sunLight.position.set(28, 76, -22);
         sunLight.castShadow = graphicsQualityRef.current !== 'low';
         sunLight.shadow.mapSize.set(
-          graphicsQualityRef.current === 'high' ? 2048 : 1024,
-          graphicsQualityRef.current === 'high' ? 2048 : 1024,
+          graphicsQualityRef.current === 'high' ? 4096 : 2048,
+          graphicsQualityRef.current === 'high' ? 4096 : 2048,
         );
-        sunLight.shadow.camera.near = 6;
-        sunLight.shadow.camera.far = 175;
-        sunLight.shadow.camera.left = -58;
-        sunLight.shadow.camera.right = 58;
-        sunLight.shadow.camera.top = 58;
-        sunLight.shadow.camera.bottom = -58;
-        sunLight.shadow.bias = -0.0005;
-        sunLight.shadow.normalBias = 0.04;
+        sunLight.shadow.camera.near = 4;
+        sunLight.shadow.camera.far = 195;
+        sunLight.shadow.camera.left = -38;
+        sunLight.shadow.camera.right = 38;
+        sunLight.shadow.camera.top = 38;
+        sunLight.shadow.camera.bottom = -38;
+        sunLight.shadow.bias = -0.00025;
+        sunLight.shadow.normalBias = 0.022;
         scene.add(sunLight);
         scene.add(sunLight.target);
-        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
-        rimLight.position.set(-50, 30, 80);
+        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
+        rimLight.position.set(-50, 34, 80);
         scene.add(rimLight);
-        // Đèn chiếu sáng mặt đường động kiểu The Flash ("chạy tới đâu đường sáng tới đó")
-        const flashRoadLight = new THREE.PointLight(0xfacc15, 0, 30, 1.35);
-        flashRoadLight.position.set(0, 1.8, 0);
+        // Đèn điểm chiếu sáng mặt đường nhựa 2K PBR (phản xạ hạt đá dăm & vệt lốp chân thật)
+        const flashRoadLight = new THREE.PointLight(0xfacc15, 0, 34, 1.45);
+        flashRoadLight.position.set(0, 1.85, 0);
         scene.add(flashRoadLight);
 
         // ---------- Procedural Textures ----------
@@ -493,101 +489,182 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const halfW = trackW / 2;
         const dummy = new THREE.Object3D();
 
-        // Vật liệu & hình khối dùng chung giữa các lần dựng map
-        const grassTex = makeGrassTexture();
-        const grassMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.92 });
-        const roadMat = new THREE.MeshStandardMaterial({
-          map: makeAsphaltTexture(),
-          roughness: 0.65,
-          metalness: 0.08,
+        // Vật liệu PBR / PBS 2K (2048x2048 Albedo + NormalMap + RoughnessMap) & Hình khối Topology Triangle
+        const grassPBR = create2KGrassPBR(THREE, maxAniso, 2048);
+        const asphaltPBR = create2KAsphaltPBR(THREE, maxAniso, 2048);
+
+        const grassMat = new THREE.MeshPhysicalMaterial({
+          map: grassPBR.map,
+          normalMap: grassPBR.normalMap,
+          normalScale: new THREE.Vector2(0.95, 0.95),
+          roughnessMap: grassPBR.roughnessMap,
+          roughness: 1.0,
+          metalness: 0.0,
+          sheen: 0.52,
+          sheenRoughness: 0.68,
+          sheenColor: new THREE.Color(0x86efac),
+          envMapIntensity: 0.85,
         });
-        const curbMat = new THREE.MeshStandardMaterial({ map: makeCurbTexture(), roughness: 0.45 });
+        const roadMat = new THREE.MeshPhysicalMaterial({
+          map: asphaltPBR.map,
+          normalMap: asphaltPBR.normalMap,
+          normalScale: new THREE.Vector2(1.18, 1.18),
+          roughnessMap: asphaltPBR.roughnessMap,
+          roughness: 1.0,
+          metalness: 0.06,
+          clearcoat: 0.22,
+          clearcoatRoughness: 0.38,
+          ior: 1.48,
+          envMapIntensity: 1.18,
+        });
+        const curbMat = new THREE.MeshPhysicalMaterial({
+          map: makeCurbTexture(),
+          roughness: 0.38,
+          clearcoat: 0.35,
+          clearcoatRoughness: 0.3,
+        });
         const barrierGeo = new THREE.BoxGeometry(0.7, 1.05, 3.6);
-        const barrierRed = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.4 });
-        const barrierWhite = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
-        // Cây xanh tự nhiên nhiều tầng tán lá + bụi cây & cụm cỏ 3D chi tiết ven đường
-        const trunkGeo = new THREE.CylinderGeometry(0.28, 0.56, 4.1, 7);
-        const leafBotGeo = new THREE.IcosahedronGeometry(2.05, 1);
-        const leafTopGeo = new THREE.IcosahedronGeometry(1.48, 1);
-        const bushGeo = new THREE.DodecahedronGeometry(1.05, 1);
-        const grassBladeGeo = new THREE.ConeGeometry(0.22, 0.95, 4);
-        const flowerGeo = new THREE.OctahedronGeometry(0.28, 0);
-        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b3a19, roughness: 0.92 });
-        const leafMatA = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.82, flatShading: true });
-        const leafMatB = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.78, flatShading: true });
-        const leafMatC = new THREE.MeshStandardMaterial({ color: 0x4ade80, roughness: 0.75, flatShading: true });
-        const grassBladeMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.85, flatShading: true });
-        const flowerMatPink = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.55 });
-        const flowerMatGold = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 });
+        const barrierRed = new THREE.MeshPhysicalMaterial({
+          color: 0xef4444,
+          roughness: 0.32,
+          clearcoat: 0.45,
+          clearcoatRoughness: 0.25,
+        });
+        const barrierWhite = new THREE.MeshPhysicalMaterial({
+          color: 0xf8fafc,
+          roughness: 0.32,
+          clearcoat: 0.45,
+          clearcoatRoughness: 0.25,
+        });
+        // Cây xanh, bụi cỏ & hoa sử dụng lưới Triangle mịn hơn (bỏ mảng phẳng thô) + tán lá PBS
+        const trunkGeo = new THREE.CylinderGeometry(0.28, 0.56, 4.1, 12);
+        const leafBotGeo = new THREE.IcosahedronGeometry(2.05, 2);
+        const leafTopGeo = new THREE.IcosahedronGeometry(1.48, 2);
+        const bushGeo = new THREE.IcosahedronGeometry(1.05, 2);
+        const grassBladeGeo = new THREE.ConeGeometry(0.22, 0.95, 6);
+        const flowerGeo = new THREE.OctahedronGeometry(0.28, 1);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b3a19, roughness: 0.9 });
+        const leafMatA = new THREE.MeshPhysicalMaterial({
+          color: 0x15803d,
+          roughness: 0.72,
+          sheen: 0.45,
+          sheenColor: new THREE.Color(0x4ade80),
+        });
+        const leafMatB = new THREE.MeshPhysicalMaterial({
+          color: 0x22c55e,
+          roughness: 0.68,
+          sheen: 0.48,
+          sheenColor: new THREE.Color(0x86efac),
+        });
+        const leafMatC = new THREE.MeshPhysicalMaterial({
+          color: 0x4ade80,
+          roughness: 0.65,
+          sheen: 0.5,
+          sheenColor: new THREE.Color(0xbbf7d0),
+        });
+        const grassBladeMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.8 });
+        const flowerMatPink = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.48 });
+        const flowerMatGold = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.44 });
         const standGeo = new THREE.BoxGeometry(6.5, 4.4, 18);
         const standRoofGeo = new THREE.BoxGeometry(7.6, 0.6, 18.6);
-        const standMat = new THREE.MeshStandardMaterial({ color: 0x4f46e5, roughness: 0.55 });
-        const roofMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.35 });
-        const lakeMat = new THREE.MeshStandardMaterial({
-          color: 0x0ea5e9,
+        const standMat = new THREE.MeshStandardMaterial({ color: 0x4f46e5, roughness: 0.5 });
+        const roofMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.32 });
+        const lakeMat = new THREE.MeshPhysicalMaterial({
+          color: 0x0284c7,
           emissive: 0x0369a1,
-          emissiveIntensity: 0.25,
-          roughness: 0.15,
-          metalness: 0.5,
+          emissiveIntensity: 0.14,
+          roughness: 0.06,
+          metalness: 0.12,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.04,
+          ior: 1.333,
+          reflectivity: 0.95,
+          normalMap: grassPBR.normalMap,
+          normalScale: new THREE.Vector2(0.18, 0.18),
         });
         const gatePillarGeo = new THREE.BoxGeometry(1.3, 10.2, 1.3);
-        const gatePillarMat = new THREE.MeshStandardMaterial({
+        const gatePillarMat = new THREE.MeshPhysicalMaterial({
           color: 0xfacc15,
-          metalness: 0.4,
-          roughness: 0.3,
+          metalness: 0.65,
+          roughness: 0.22,
+          clearcoat: 0.6,
         });
         const gateBannerMat = new THREE.MeshBasicMaterial({ map: makeCheckeredTexture(22, 3) });
-        const finishLineMat = new THREE.MeshBasicMaterial({ map: makeCheckeredTexture(14, 2) });
+        const finishLineMat = new THREE.MeshStandardMaterial({
+          map: makeCheckeredTexture(14, 2),
+          roughness: 0.42,
+        });
 
-        // Hình khối & vật liệu riêng cho 4 bản đồ (Park / Stadium / Mountain / Neon City)
-        const pineConeBotGeo = new THREE.ConeGeometry(2.3, 3.6, 6);
-        const pineConeTopGeo = new THREE.ConeGeometry(1.6, 2.8, 6);
-        const mountainPeakGeo = new THREE.ConeGeometry(1.0, 1.0, 5);
-        const mountainSnowGeo = new THREE.ConeGeometry(0.42, 0.42, 5);
-        const boulderGeo = new THREE.DodecahedronGeometry(1.6, 0);
-        const rockMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.92, flatShading: true });
-        const snowMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.65 });
+        // Hình khối Triangle mịn cho 4 bản đồ (Park / Stadium / Mountain / Neon City)
+        const pineConeBotGeo = new THREE.ConeGeometry(2.3, 3.6, 12);
+        const pineConeTopGeo = new THREE.ConeGeometry(1.6, 2.8, 12);
+        const mountainPeakGeo = new THREE.ConeGeometry(1.0, 1.0, 9);
+        const mountainSnowGeo = new THREE.ConeGeometry(0.42, 0.42, 9);
+        const boulderGeo = new THREE.DodecahedronGeometry(1.6, 1);
+        const rockMat = new THREE.MeshStandardMaterial({
+          color: 0x64748b,
+          roughness: 0.88,
+          normalMap: asphaltPBR.normalMap,
+          normalScale: new THREE.Vector2(0.65, 0.65),
+        });
+        const snowMat = new THREE.MeshPhysicalMaterial({
+          color: 0xf8fafc,
+          roughness: 0.48,
+          sheen: 0.4,
+          sheenColor: new THREE.Color(0xe0f2fe),
+        });
 
-        const fountainBaseGeo = new THREE.CylinderGeometry(4.5, 5.2, 0.9, 16);
-        const fountainJetGeo = new THREE.CylinderGeometry(0.7, 1.15, 7.5, 12);
-        const fountainRingGeo = new THREE.TorusGeometry(2.6, 0.28, 8, 20);
-        const fountainStoneMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.5 });
-        const fountainWaterMat = new THREE.MeshBasicMaterial({
+        const fountainBaseGeo = new THREE.CylinderGeometry(4.5, 5.2, 0.9, 24);
+        const fountainJetGeo = new THREE.CylinderGeometry(0.7, 1.15, 7.5, 18);
+        const fountainRingGeo = new THREE.TorusGeometry(2.6, 0.28, 12, 28);
+        const fountainStoneMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.45 });
+        const fountainWaterMat = new THREE.MeshPhysicalMaterial({
           color: 0x38bdf8,
           transparent: true,
-          opacity: 0.82,
+          opacity: 0.84,
+          roughness: 0.08,
+          ior: 1.333,
         });
-        const balloonEnvelopeGeo = new THREE.SphereGeometry(3.2, 12, 10);
+        const balloonEnvelopeGeo = new THREE.SphereGeometry(3.2, 20, 16);
         const balloonBasketGeo = new THREE.BoxGeometry(1.5, 1.2, 1.5);
         const balloonPalette = [0xef4444, 0xfacc15, 0x38bdf8, 0xec4899, 0x22c55e, 0xa855f7];
         const balloonMats = balloonPalette.map(
-          (col) => new THREE.MeshStandardMaterial({ color: col, roughness: 0.45 }),
+          (col) => new THREE.MeshPhysicalMaterial({ color: col, roughness: 0.36, clearcoat: 0.35 }),
         );
 
         const towerPoleGeo = new THREE.BoxGeometry(0.85, 18.0, 0.85);
         const towerHeadGeo = new THREE.BoxGeometry(4.6, 1.8, 0.9);
-        const towerGlowMat = new THREE.MeshBasicMaterial({ color: 0xfef9c3 });
-        const trophyBaseGeo = new THREE.CylinderGeometry(4.0, 4.8, 2.2, 12);
-        const trophyStemGeo = new THREE.CylinderGeometry(1.0, 1.6, 4.0, 12);
-        const trophyCupGeo = new THREE.CylinderGeometry(4.2, 1.8, 4.8, 12);
-        const trophyGoldMat = new THREE.MeshStandardMaterial({
+        const towerGlowMat = new THREE.MeshStandardMaterial({
+          color: 0xfef9c3,
+          emissive: 0xfef08a,
+          emissiveIntensity: 0.5,
+          roughness: 0.2,
+        });
+        const trophyBaseGeo = new THREE.CylinderGeometry(4.0, 4.8, 2.2, 20);
+        const trophyStemGeo = new THREE.CylinderGeometry(1.0, 1.6, 4.0, 20);
+        const trophyCupGeo = new THREE.CylinderGeometry(4.2, 1.8, 4.8, 20);
+        const trophyGoldMat = new THREE.MeshPhysicalMaterial({
           color: 0xfacc15,
           emissive: 0xd97706,
-          emissiveIntensity: 0.4,
-          metalness: 0.85,
-          roughness: 0.2,
+          emissiveIntensity: 0.25,
+          metalness: 0.92,
+          roughness: 0.14,
+          clearcoat: 0.9,
+          clearcoatRoughness: 0.1,
         });
 
         const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
-        const buildingBodyMat = new THREE.MeshStandardMaterial({
+        const buildingBodyMat = new THREE.MeshPhysicalMaterial({
           color: 0x0f172a,
-          roughness: 0.45,
-          metalness: 0.35,
+          roughness: 0.32,
+          metalness: 0.55,
+          clearcoat: 0.65,
         });
-        const matDarkMetal = new THREE.MeshStandardMaterial({
+        const matDarkMetal = new THREE.MeshPhysicalMaterial({
           color: 0x334155,
-          metalness: 0.8,
-          roughness: 0.3,
+          metalness: 0.86,
+          roughness: 0.26,
+          clearcoat: 0.4,
         });
         const neonCyanMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
         const neonPinkMat = new THREE.MeshBasicMaterial({ color: 0xec4899 });
@@ -598,30 +675,44 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
         const floatingLandmarks: Array<{ mesh: any; baseY: number; phase: number }> = [];
 
-        // Mây khối 3D (neo theo tâm map, dựng 1 lần)
+        // Mây tích (Cumulus) lưới Tam Giác tròn mịn tự nhiên thay thế hoàn toàn khối hộp vuông
         const cloudAnchor = new THREE.Group();
         const cloudGroup = new THREE.Group();
-        const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
-        const cloudGeo1 = new THREE.BoxGeometry(10, 2.8, 6);
-        const cloudGeo2 = new THREE.BoxGeometry(6, 2.4, 4.5);
-        for (let i = 0; i < 24; i++) {
+        const cloudMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.92,
+        });
+        const cloudPuffGeoA = new THREE.IcosahedronGeometry(4.6, 2);
+        cloudPuffGeoA.scale(1.35, 0.62, 0.95);
+        const cloudPuffGeoB = new THREE.IcosahedronGeometry(3.4, 2);
+        cloudPuffGeoB.scale(1.15, 0.68, 0.9);
+        for (let i = 0; i < 22; i++) {
           const cg = new THREE.Group();
-          cg.add(new THREE.Mesh(cloudGeo1, cloudMat));
-          const m2 = new THREE.Mesh(cloudGeo2, cloudMat);
-          m2.position.set(2.5, 1.6, 0);
-          cg.add(m2);
-          cg.position.set(-140 + (i % 6) * 56, 34 + (i % 4) * 6, -170 + Math.floor(i / 6) * 110);
+          cg.add(new THREE.Mesh(cloudPuffGeoA, cloudMat));
+          const m2 = new THREE.Mesh(cloudPuffGeoB, cloudMat);
+          m2.position.set(3.4, 1.1, 0.4);
+          const m3 = new THREE.Mesh(cloudPuffGeoB, cloudMat);
+          m3.position.set(-3.1, 0.7, -0.3);
+          m3.scale.setScalar(0.85);
+          cg.add(m2, m3);
+          cg.position.set(-140 + (i % 6) * 56, 36 + (i % 4) * 6, -170 + Math.floor(i / 6) * 110);
           cloudGroup.add(cg);
         }
         cloudAnchor.add(cloudGroup);
         scene.add(cloudAnchor);
 
-        // Bục Vinh Danh 3D (dựng 1 lần, đặt lại vị trí theo từng map) — không có biển chữ để màn hình gọn gàng
+        // Bục Vinh Danh 3D PBS (phủ Clearcoat sang trọng, nhận & đổ bóng thật)
         const podiumGroup = new THREE.Group();
         const makePodiumBlock = (x: number, h: number, color: number) => {
           const box = new THREE.Mesh(
             new THREE.BoxGeometry(4.4, h, 4.4),
-            new THREE.MeshStandardMaterial({ color, metalness: 0.45, roughness: 0.25 }),
+            new THREE.MeshPhysicalMaterial({
+              color,
+              metalness: 0.62,
+              roughness: 0.2,
+              clearcoat: 0.85,
+              clearcoatRoughness: 0.12,
+            }),
           );
           box.position.set(x, h / 2, 0);
           box.castShadow = true;
@@ -651,7 +742,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           podiumRightPt.sub(podiumCenterVec).normalize();
         };
 
-        // Luồng ánh sáng Spotlight 3D chiếu từ trên cao xuống nhân vật đang được CameraDirector tập trung
         const spotlightBeam = new THREE.Mesh(
           new THREE.ConeGeometry(3.4, 14, 18, 1, true),
           new THREE.MeshBasicMaterial({
@@ -666,7 +756,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         spotlightBeam.visible = false;
         scene.add(spotlightBeam);
 
-        // Tọa độ thế giới của từng vị trí trên Bục Top 1-2-3
         const getPodiumSlotWorld = (rank: number) => {
           const lx = rank === 1 ? 0 : rank === 2 ? -5.0 : 5.0;
           const ly = rank === 1 ? 3.4 : rank === 2 ? 2.3 : 1.6;
@@ -675,70 +764,15 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           return { x: v.x, y: v.y, z: v.z, yaw: podiumGroup.rotation.y };
         };
 
-        // Áp dụng chủ đề màu (ngày/đêm/hoàng hôn) và màu lề đường của từng map
+        // Áp dụng màu đặc trưng của lề đường và cây lá theo từng bản đồ (ánh sáng & bầu trời do Real-Time PBL điều phối)
         const applyMapTheme = (th: MapTheme) => {
-          if (skyDome.material.map) skyDome.material.map.dispose();
-          skyDome.material.map = makeSkyTexture(th.sky);
-          skyDome.material.needsUpdate = true;
           if (curbMat.map) curbMat.map.dispose();
           curbMat.map = makeCurbTexture(th.curbColorA, th.curbColorB);
           curbMat.needsUpdate = true;
           barrierRed.color.setHex(th.curbColorA);
           barrierWhite.color.setHex(th.curbColorB);
-          scene.fog.color.setHex(th.fog);
-          scene.fog.density = th.fogDensity;
-          renderer.toneMappingExposure = th.exposure;
-          hemiLight.color.setHex(th.hemiSky);
-          hemiLight.groundColor.setHex(th.hemiGround);
-          sunLight.color.setHex(th.sunColor);
-          sunLight.intensity = th.sunIntensity;
-          grassMat.color.setHex(th.grassTint);
           leafMatA.color.setHex(th.leafA);
           leafMatB.color.setHex(th.leafB);
-          cloudMat.color.setHex(th.cloudColor);
-        };
-
-        // Dải mặt đường / lề cong khép kín theo CIRCUIT_TRACK hiện tại
-        const buildClosedRibbon = (
-          innerOffset: number,
-          outerOffset: number,
-          yHeight: number,
-          uvRepeatPerMeter: number,
-        ) => {
-          const totalLen = CIRCUIT_TRACK.totalLength;
-          const segs = Math.max(220, Math.min(700, Math.ceil(totalLen / 3)));
-          const positions: number[] = [];
-          const normals: number[] = [];
-          const uvs: number[] = [];
-          const indices: number[] = [];
-
-          for (let i = 0; i <= segs; i++) {
-            const dist = (i / segs) * totalLen;
-            const s = sampleCircuit(dist, 0);
-            positions.push(
-              s.x + s.rx * innerOffset,
-              yHeight,
-              s.z + s.rz * innerOffset,
-              s.x + s.rx * outerOffset,
-              yHeight,
-              s.z + s.rz * outerOffset,
-            );
-            normals.push(0, 1, 0, 0, 1, 0);
-            const v = dist * uvRepeatPerMeter;
-            uvs.push(0, v, 1, v);
-
-            if (i < segs) {
-              const a = i * 2;
-              indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-            }
-          }
-
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-          geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-          geo.setIndex(indices);
-          return geo;
         };
 
         const sharedTrackGeos = new Set<any>([
@@ -780,10 +814,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const applyGraphicsQualitySettings = (q: GraphicsQuality) => {
           const isLow = q === 'low';
           const isHigh = q === 'high';
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isHigh ? 1.5 : isLow ? 1.0 : 1.25));
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isHigh ? 1.55 : isLow ? 1.0 : 1.3));
           renderer.shadowMap.enabled = !isLow;
           sunLight.castShadow = !isLow;
-          const targetMapSize = isHigh ? 2048 : 1024;
+          // Độ phân giải Shadow Map siêu nét: 4096x4096 ở mức Cao, 2048x2048 ở mức Trung bình
+          const targetMapSize = isHigh ? 4096 : 2048;
           if (sunLight.shadow.mapSize.width !== targetMapSize) {
             sunLight.shadow.mapSize.set(targetMapSize, targetMapSize);
             if (sunLight.shadow.map) {
@@ -824,20 +859,59 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           applyGraphicsQualitySettings(quality);
           const enableWorldShadows = quality !== 'low';
 
-          // Mặt nền toàn khu vực (nhận bóng đổ chân thực)
+          // Tính bán kính hồ nước trước để giữ lòng hồ & hành lang đường đua phẳng tuyệt đối trên lưới địa hình Triangle
+          let lakeX = cx;
+          let lakeZ = cz;
+          let lakeR = 0;
+          if (map.theme.lake) {
+            let minDist = Infinity;
+            for (let i = 0; i < CIRCUIT_TRACK.samples.length; i += 4) {
+              const p = CIRCUIT_TRACK.samples[i];
+              minDist = Math.min(minDist, Math.hypot(cx - p.x, cz - p.z));
+            }
+            const r = Math.min(26, minDist - halfW - 8);
+            if (r >= 9) lakeR = r;
+          }
+
+          // Địa hình lưới Tam Giác (Triangle Topology Terrain) có đồi tự nhiên bao quanh + Texture 2K PBR
           const grassSize = ext + 520;
-          grassTex.repeat.set(grassSize / 18, grassSize / 18);
-          const grass = new THREE.Mesh(new THREE.PlaneGeometry(grassSize, grassSize), grassMat);
-          grass.rotation.x = -Math.PI / 2;
-          grass.position.set(cx, -0.08, cz);
+          const repeatCnt = grassSize / 16;
+          grassPBR.map.repeat.set(repeatCnt, repeatCnt);
+          grassPBR.normalMap.repeat.set(repeatCnt, repeatCnt);
+          grassPBR.roughnessMap.repeat.set(repeatCnt, repeatCnt);
+          const terrainGeo = buildTriangulatedTerrain(
+            THREE,
+            grassSize,
+            cx,
+            cz,
+            CIRCUIT_TRACK.samples,
+            halfW,
+            lakeX,
+            lakeZ,
+            lakeR,
+            podiumCenterVec.x,
+            podiumCenterVec.z,
+            quality === 'low' ? 48 : 96,
+          );
+          const grass = new THREE.Mesh(terrainGeo, grassMat);
+          grass.position.set(cx, 0, cz);
           grass.receiveShadow = enableWorldShadows;
           trackRoot.add(grass);
 
-          // Mặt đường nhựa + lề màu riêng theo từng map (nhận bóng đổ chân thực của nhân vật, rồng, rocket!)
-          const roadMesh = new THREE.Mesh(buildClosedRibbon(-halfW, halfW, 0.01, 0.055), roadMat);
+          // Mặt đường nhựa 2K PBR & lề đường theo lưới Tam Giác mịn (widthSegs = 8, có độ vồng mặt đường tự nhiên)
+          const roadMesh = new THREE.Mesh(
+            buildTriangulatedRibbon(THREE, sampleCircuit, total, -halfW, halfW, 0.012, 0.055, 8, 0.042),
+            roadMat,
+          );
           roadMesh.receiveShadow = enableWorldShadows;
-          const curbL = new THREE.Mesh(buildClosedRibbon(-halfW - 1.5, -halfW, 0.06, 0.14), curbMat);
-          const curbR = new THREE.Mesh(buildClosedRibbon(halfW, halfW + 1.5, 0.06, 0.14), curbMat);
+          const curbL = new THREE.Mesh(
+            buildTriangulatedRibbon(THREE, sampleCircuit, total, -halfW - 1.5, -halfW, 0.06, 0.14, 3, 0.015),
+            curbMat,
+          );
+          const curbR = new THREE.Mesh(
+            buildTriangulatedRibbon(THREE, sampleCircuit, total, halfW, halfW + 1.5, 0.06, 0.14, 3, 0.015),
+            curbMat,
+          );
           curbL.receiveShadow = enableWorldShadows;
           curbR.receiveShadow = enableWorldShadows;
           trackRoot.add(roadMesh, curbL, curbR);
@@ -871,7 +945,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           }
           trackRoot.add(redBarrierInst, whiteBarrierInst);
 
-          // Duy nhất 1 cổng XUẤT PHÁT / VỀ ĐÍCH (distance = 0)
+          // Duy nhất 1 cổng XUẤT PHÁT / VỀ ĐÍCH (distance = 0, đổ bóng thật xuống đường)
           {
             const s = sampleCircuit(0, 0);
             const grp = new THREE.Group();
@@ -886,44 +960,39 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             banner.position.set(0, 9.6, 0);
             const line = new THREE.Mesh(new THREE.PlaneGeometry(trackW, 3.8), finishLineMat);
             line.rotation.x = -Math.PI / 2;
-            line.position.set(0, 0.07, 0);
+            line.position.set(0, 0.068, 0);
+            line.receiveShadow = enableWorldShadows;
+            if (enableWorldShadows) {
+              leftP.castShadow = true;
+              rightP.castShadow = true;
+              banner.castShadow = true;
+            }
             grp.add(leftP, rightP, banner, line);
             grp.position.set(s.x, 0, s.z);
             grp.rotation.y = s.yaw;
             trackRoot.add(grp);
           }
 
-          // Hồ nước + Đài phun nước 3D ở map Công Viên
-          let lakeX = cx;
-          let lakeZ = cz;
-          let lakeR = 0;
-          if (map.theme.lake) {
-            let minDist = Infinity;
-            for (let i = 0; i < CIRCUIT_TRACK.samples.length; i += 4) {
-              const p = CIRCUIT_TRACK.samples[i];
-              minDist = Math.min(minDist, Math.hypot(cx - p.x, cz - p.z));
-            }
-            const r = Math.min(26, minDist - halfW - 8);
-            if (r >= 9) {
-              lakeR = r;
-              const lake = new THREE.Mesh(new THREE.CircleGeometry(r, 32), lakeMat);
-              lake.rotation.x = -Math.PI / 2;
-              lake.position.set(lakeX, -0.02, lakeZ);
-              trackRoot.add(lake);
+          // Hồ nước PBR phản chiếu bầu trời thật + Đài phun nước 3D ở map Công Viên
+          if (lakeR >= 9) {
+            const lake = new THREE.Mesh(new THREE.CircleGeometry(lakeR, 48), lakeMat);
+            lake.rotation.x = -Math.PI / 2;
+            lake.position.set(lakeX, -0.02, lakeZ);
+            lake.receiveShadow = enableWorldShadows;
+            trackRoot.add(lake);
 
-              // Đài phun nước giữa hồ
-              const fGrp = new THREE.Group();
-              const fBase = new THREE.Mesh(fountainBaseGeo, fountainStoneMat);
-              fBase.position.y = 0.45;
-              const fJet = new THREE.Mesh(fountainJetGeo, fountainWaterMat);
-              fJet.position.y = 4.2;
-              const fRing = new THREE.Mesh(fountainRingGeo, fountainWaterMat);
-              fRing.rotation.x = Math.PI / 2;
-              fRing.position.y = 7.4;
-              fGrp.add(fBase, fJet, fRing);
-              fGrp.position.set(lakeX, 0, lakeZ);
-              trackRoot.add(fGrp);
-            }
+            const fGrp = new THREE.Group();
+            const fBase = new THREE.Mesh(fountainBaseGeo, fountainStoneMat);
+            fBase.position.y = 0.45;
+            const fJet = new THREE.Mesh(fountainJetGeo, fountainWaterMat);
+            fJet.position.y = 4.2;
+            const fRing = new THREE.Mesh(fountainRingGeo, fountainWaterMat);
+            fRing.rotation.x = Math.PI / 2;
+            fRing.position.y = 7.4;
+            if (enableWorldShadows) fBase.castShadow = true;
+            fGrp.add(fBase, fJet, fRing);
+            fGrp.position.set(lakeX, 0, lakeZ);
+            trackRoot.add(fGrp);
           }
 
           const isSafeScenerySpot = (x: number, z: number, minClearance: number) => {
@@ -1279,7 +1348,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             }
           }
 
-          // Khán đài cơ bản cho map Công Viên / Đèo (Stadium đã tự xây 12 khán đài)
+          // Khán đài cơ bản + Hệ thống Đèn Đường Cao Áp tự động bật sáng khi hoàng hôn/ban đêm trên Park & Mountain
           if (scenery === 'park' || scenery === 'mountain') {
             const standFracs = [0.06, 0.38, 0.72];
             standFracs.forEach((frac, idx) => {
@@ -1291,11 +1360,33 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               base.position.y = 2.2;
               const roof = new THREE.Mesh(standRoofGeo, roofMat);
               roof.position.y = 6.2;
+              if (enableWorldShadows) {
+                base.castShadow = true;
+                base.receiveShadow = true;
+                roof.castShadow = true;
+              }
               sg.add(base, roof);
               sg.position.set(s.x, 0, s.z);
               sg.rotation.y = s.yaw;
               trackRoot.add(sg);
             });
+
+            for (let sl = 0; sl < 18; sl++) {
+              const side = sl % 2 === 0 ? -1 : 1;
+              const s = sampleCircuit((sl / 18) * total, side * (halfW + 3.4));
+              const lg = new THREE.Group();
+              const post = new THREE.Mesh(streetPostGeo, matDarkMetal);
+              post.position.y = 3.6;
+              const arm = new THREE.Mesh(streetArmGeo, matDarkMetal);
+              arm.position.set(-side * 1.0, 7.1, 0);
+              const lamp = new THREE.Mesh(streetLampGeo, towerGlowMat);
+              lamp.position.set(-side * 1.9, 6.95, 0);
+              if (enableWorldShadows) post.castShadow = true;
+              lg.add(post, arm, lamp);
+              lg.position.set(s.x, 0, s.z);
+              lg.rotation.y = s.yaw;
+              trackRoot.add(lg);
+            }
           }
 
           if (relayoutProps) relayoutProps();
@@ -1343,57 +1434,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         camera.add(windStreaksGroup);
 
 
-        // ---------- 3. Hệ thống Hạt 3D Thật (Lửa, Khói, Tia Sét, Pháo Hoa) ----------
+        // ---------- 3. Hệ thống Tia Lửa Đạn Đạo 3D Vật Lý (Nảy mặt đường nhựa & Bức xạ vật đen) ----------
         const glowTex = makeGlowParticleTexture();
-        interface Particle {
-          active: boolean;
-          x: number;
-          y: number;
-          z: number;
-          vx: number;
-          vy: number;
-          vz: number;
-          life: number;
-          maxLife: number;
-          size: number;
-          grow: number;
-          gravity: number;
-          sprite: any;
-          mat: any;
-        }
-        const particles: Particle[] = [];
-        for (let i = 0; i < MAX_PARTICLES; i++) {
-          const mat = new THREE.SpriteMaterial({
-            map: glowTex,
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
-          });
-          const sprite = new THREE.Sprite(mat);
-          sprite.visible = false;
-          scene.add(sprite);
-          particles.push({
-            active: false,
-            x: 0,
-            y: 0,
-            z: 0,
-            vx: 0,
-            vy: 0,
-            vz: 0,
-            life: 0,
-            maxLife: 1,
-            size: 1,
-            grow: 0,
-            gravity: 0,
-            sprite,
-            mat,
-          });
-        }
+        const sparkSystem = createBallisticSparkSystem(THREE, scene, 260);
 
-        let particleCursor = 0;
-        const spawnParticle = (_opts: {
+        const spawnParticle = (opts: {
           x: number;
           y: number;
           z: number;
@@ -1407,7 +1452,26 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           color: number;
           smoke?: boolean;
         }) => {
-          // Không dùng hạt mịn/nhiễu rời rạc để giữ toàn bộ hiệu ứng 3D (tia sét, hào quang, vòng năng lượng, vệt đèn đường, lửa) siêu mượt mà & sắc nét!
+          // Bỏ qua khói mờ mịn, chỉ phóng tia lửa 3D tam giác sắc lẹm có trọng lực & nảy trên đường đua!
+          if (opts.smoke) return;
+          const useCustomHue =
+            opts.color === 0x38bdf8 ||
+            opts.color === 0x22d3ee ||
+            opts.color === 0x34d399 ||
+            opts.color === 0x4ade80 ||
+            opts.color === 0xc084fc ||
+            opts.color === 0xe879f9;
+          sparkSystem.spawn({
+            x: opts.x,
+            y: opts.y,
+            z: opts.z,
+            vx: opts.vx,
+            vy: opts.vy,
+            vz: opts.vz,
+            life: opts.life,
+            size: Math.max(0.65, Math.min(1.55, opts.size)),
+            tintHex: useCustomHue ? opts.color : undefined,
+          });
         };
 
         // ---------- 3B. Vệt Đèn Đường Phát Sáng The Flash ("chạy tới đâu đường sáng tới đó") ----------
@@ -1630,22 +1694,28 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           transparent: true,
           depthWrite: false,
         });
-        const matChrome = new THREE.MeshStandardMaterial({
-          color: 0xe2e8f0,
-          metalness: 0.75,
-          roughness: 0.22,
+        const matChrome = new THREE.MeshPhysicalMaterial({
+          color: 0xf1f5f9,
+          metalness: 0.92,
+          roughness: 0.14,
+          clearcoat: 0.9,
+          clearcoatRoughness: 0.08,
         });
-        const matRocketRed = new THREE.MeshStandardMaterial({
+        const matRocketRed = new THREE.MeshPhysicalMaterial({
           color: 0xef4444,
-          metalness: 0.35,
-          roughness: 0.25,
+          metalness: 0.45,
+          roughness: 0.18,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.08,
         });
-        const matGlass = new THREE.MeshStandardMaterial({
+        const matGlass = new THREE.MeshPhysicalMaterial({
           color: 0x38bdf8,
           emissive: 0x0284c7,
-          emissiveIntensity: 0.65,
-          metalness: 0.85,
-          roughness: 0.1,
+          emissiveIntensity: 0.55,
+          metalness: 0.2,
+          roughness: 0.05,
+          clearcoat: 1.0,
+          ior: 1.52,
         });
         const matFlameOuter = new THREE.MeshBasicMaterial({
           color: 0xf97316,
@@ -1658,26 +1728,34 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           transparent: true,
           opacity: 0.85,
         });
-        const matDragonGold = new THREE.MeshStandardMaterial({
+        const matDragonGold = new THREE.MeshPhysicalMaterial({
           color: 0xfacc15,
           emissive: 0xd97706,
-          emissiveIntensity: 0.48,
-          metalness: 0.78,
-          roughness: 0.2,
+          emissiveIntensity: 0.35,
+          metalness: 0.88,
+          roughness: 0.16,
+          clearcoat: 0.95,
+          clearcoatRoughness: 0.1,
+          iridescence: 0.38,
+          iridescenceIOR: 1.4,
         });
-        const matDragonCrimson = new THREE.MeshStandardMaterial({
+        const matDragonCrimson = new THREE.MeshPhysicalMaterial({
           color: 0xdc2626,
           emissive: 0x991b1b,
-          emissiveIntensity: 0.42,
-          metalness: 0.55,
-          roughness: 0.24,
+          emissiveIntensity: 0.32,
+          metalness: 0.62,
+          roughness: 0.2,
+          clearcoat: 0.9,
+          iridescence: 0.3,
         });
-        const matDragonRoyalBlue = new THREE.MeshStandardMaterial({
+        const matDragonRoyalBlue = new THREE.MeshPhysicalMaterial({
           color: 0x1d4ed8,
           emissive: 0x1e3a8a,
-          emissiveIntensity: 0.48,
-          metalness: 0.68,
-          roughness: 0.22,
+          emissiveIntensity: 0.36,
+          metalness: 0.78,
+          roughness: 0.18,
+          clearcoat: 0.95,
+          iridescence: 0.42,
         });
         const matDragonWingMembrane = new THREE.MeshStandardMaterial({
           color: 0xf97316,
@@ -1746,9 +1824,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           dragonRightWing: any;
           dragonOrbsGrp: any;
           flashLightningGrp: any;
-          flashBolts: any[];
-          flashMatA: any;
-          flashMatB: any;
+          jaggedLightning: ReturnType<typeof createJaggedLightningGroup>;
         }
 
         const createRacerSlot = (): RacerSlot => {
@@ -1994,50 +2070,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           dragonGrp.visible = false;
           root.add(dragonGrp);
 
-          // 5) Tia sét 3D kiểu The Flash Speed-Force (5 tia gãy khúc phóng điện quanh người & kéo vệt sau lưng)
-          const flashMatA = new THREE.MeshBasicMaterial({
-            color: 0xfacc15,
-            transparent: true,
-            opacity: 0.95,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          });
-          const flashMatB = new THREE.MeshBasicMaterial({
-            color: 0xfef08a,
-            transparent: true,
-            opacity: 0.9,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          });
-          const flashLightningGrp = new THREE.Group();
-          const flashBolts: any[] = [];
-          const boltConfigs = [
-            { x: -0.78, y: 1.5, z: -0.6 },
-            { x: 0.78, y: 1.7, z: -0.6 },
-            { x: 0.0, y: 2.35, z: -0.7 },
-            { x: -0.5, y: 0.85, z: -0.8 },
-            { x: 0.5, y: 0.95, z: -0.8 },
-          ];
-          boltConfigs.forEach((cfg, bIdx) => {
-            const bolt = new THREE.Group();
-            bolt.position.set(cfg.x, cfg.y, cfg.z);
-            const seg1 = new THREE.Mesh(geoBoltMain, bIdx % 2 === 0 ? flashMatA : flashMatB);
-            seg1.position.set(0, 0.08, -0.3);
-            seg1.rotation.set(0.18, 0.25, 0);
-            const seg2 = new THREE.Mesh(geoBoltDiag, bIdx % 2 === 0 ? flashMatB : flashMatA);
-            seg2.position.set(bIdx % 2 === 0 ? 0.22 : -0.22, -0.1, -1.25);
-            seg2.rotation.set(-0.28, bIdx % 2 === 0 ? -0.35 : 0.35, 0);
-            const seg3 = new THREE.Mesh(geoBoltMain, bIdx % 2 === 0 ? flashMatA : flashMatB);
-            seg3.position.set(0, 0.06, -2.2);
-            seg3.rotation.set(0.16, 0.18, 0);
-            const seg4 = new THREE.Mesh(geoBoltDiag, flashMatB);
-            seg4.position.set(bIdx % 2 === 0 ? -0.18 : 0.18, -0.05, -3.05);
-            seg4.rotation.set(-0.22, -0.2, 0);
-            bolt.add(seg1, seg2, seg3, seg4);
-            flashLightningGrp.add(bolt);
-            flashBolts.push(bolt);
-          });
-          flashLightningGrp.visible = false;
+          // 5) Tia Sét Phân Nhánh 3D Chân Thật (Lõi trắng nhiệt độ cao + Vỏ plasma đôi bằng lưới Tam Giác, phóng xuống mặt đường)
+          const jaggedLightning = createJaggedLightningGroup(THREE);
+          const flashLightningGrp = jaggedLightning.grp;
           root.add(flashLightningGrp);
 
           // 6) Hiệu ứng Bay Siêu Nhân (Vòng năng lượng tỏa quanh người + Hạ cánh siêu nhân, KHÔNG hình nón, KHÔNG áo choàng)
@@ -2157,9 +2192,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             dragonRightWing,
             dragonOrbsGrp,
             flashLightningGrp,
-            flashBolts,
-            flashMatA,
-            flashMatB,
+            jaggedLightning,
           };
         };
 
@@ -2972,7 +3005,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             const backX = -sample.tx;
             const backZ = -sample.tz;
 
-            // Hiệu ứng Tia Sét Speed-Force kiểu The Flash + Phát sáng đường đi như đèn ("chạy tới đâu đường sáng tới đó")
+            // Hiệu ứng Tia Sét Phân Nhánh 3D Chân Thật + Tia Lửa Đạn Đạo Nảy Trên Mặt Đường Nhựa 2K PBR
             const hasBoost = r.boost !== 'none';
             slot.flashLightningGrp.visible = hasBoost;
             if (hasBoost) {
@@ -2985,7 +3018,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                     : isJetpack
                       ? 0xfb923c
                       : 0xfacc15;
-              // In dấu ánh sáng lên mặt đường ngay dưới chân tay đua để đường sáng rực theo từng bước chạy!
               if (i < 18 && r.speed > 2 && Math.random() < 0.65) {
                 spawnRoadGlow(
                   sample.x,
@@ -2995,59 +3027,33 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   isDragon ? 2.1 : isSuperman || isRocket ? 1.45 : 1.05,
                 );
               }
-              if (isDragon) {
-                slot.flashMatA.color.setHex(0xfef08a);
-                slot.flashMatB.color.setHex(0xf97316);
-              } else if (isSuperman) {
-                slot.flashMatA.color.setHex(0x38bdf8);
-                slot.flashMatB.color.setHex(0xfacc15);
-              } else if (isRocket) {
-                slot.flashMatA.color.setHex(0xf43f5e);
-                slot.flashMatB.color.setHex(0xfacc15);
-              } else if (isJetpack) {
-                slot.flashMatA.color.setHex(0xf97316);
-                slot.flashMatB.color.setHex(0xfde047);
-              } else {
-                slot.flashMatA.color.setHex(0xfacc15);
-                slot.flashMatB.color.setHex(0x38bdf8);
-              }
+              const plasmaHex = isDragon
+                ? 0xf97316
+                : isSuperman
+                  ? 0x38bdf8
+                  : isRocket
+                    ? 0xf43f5e
+                    : isJetpack
+                      ? 0xfb923c
+                      : 0xfacc15;
+              const coreHex = isDragon || isJetpack ? 0xfef9c3 : 0xffffff;
+              const boltScale = isDragon ? 1.35 : isSuperman || isRocket ? 1.18 : 1.0;
               slot.flashLightningGrp.position.y =
-                isDragon ? 1.55 : isRocket ? 1.05 : isJetpack ? 0.85 : 0;
-              for (let bIdx = 0; bIdx < slot.flashBolts.length; bIdx++) {
-                const bolt = slot.flashBolts[bIdx];
-                const jitter = Math.sin(tSec * 48 + bIdx * 2.1 + i * 1.7);
-                const jitter2 = Math.cos(tSec * 62 + bIdx * 3.3 + i);
-                bolt.rotation.z = jitter * 0.65;
-                bolt.rotation.x = jitter2 * 0.28;
-                bolt.scale.z = 0.85 + Math.abs(jitter) * 0.95;
-                bolt.position.x = (bIdx === 2 ? 0 : bIdx % 2 === 0 ? -0.68 : 0.68) + jitter * 0.25;
-                bolt.position.y = (bIdx < 2 ? 1.55 : bIdx === 2 ? 2.25 : 0.85) + jitter2 * 0.25;
-              }
-              // Tia lửa điện Speed-Force phóng ra phía sau gót chân
-              if (i < 24 && Math.random() < 0.72) {
-                const sparkColor =
-                  isDragon || isJetpack
-                    ? Math.random() < 0.6
-                      ? 0xfacc15
-                      : 0xf97316
-                    : isRocket
-                      ? Math.random() < 0.5
-                        ? 0xf43f5e
-                        : 0xfacc15
-                      : Math.random() < 0.65
-                        ? 0xfacc15
-                        : 0x38bdf8;
+                isDragon ? 1.15 : isSuperman ? 1.35 : isRocket ? 0.75 : isJetpack ? 0.55 : 0;
+              slot.jaggedLightning.update(tSec, plasmaHex, coreHex, boltScale);
+
+              // Phóng tia lửa kim cương 3D nảy lách tách trên mặt đường nhựa phía sau gót chân!
+              if (i < 24 && Math.random() < 0.78) {
                 spawnParticle({
-                  x: sample.x + backX * 0.9 + (Math.random() - 0.5) * 1.1,
-                  y: 0.4 + Math.random() * 1.6,
-                  z: sample.z + backZ * 0.9 + (Math.random() - 0.5) * 1.1,
-                  vx: backX * (8 + Math.random() * 6) + (Math.random() - 0.5) * 2.2,
-                  vy: (Math.random() - 0.3) * 2.2,
-                  vz: backZ * (8 + Math.random() * 6) + (Math.random() - 0.5) * 2.2,
-                  life: 0.28,
-                  size: isDragon || isRocket ? 1.1 : 0.78,
-                  grow: 0.9,
-                  color: sparkColor,
+                  x: sample.x + backX * 0.85 + (Math.random() - 0.5) * 0.95,
+                  y: 0.28 + Math.random() * 1.15,
+                  z: sample.z + backZ * 0.85 + (Math.random() - 0.5) * 0.95,
+                  vx: backX * (9 + Math.random() * 8) + (Math.random() - 0.5) * 3.8,
+                  vy: 1.6 + Math.random() * 3.4,
+                  vz: backZ * (9 + Math.random() * 8) + (Math.random() - 0.5) * 3.8,
+                  life: 0.36 + Math.random() * 0.25,
+                  size: isDragon || isRocket ? 1.25 : 0.92,
+                  color: isSuperman ? 0x38bdf8 : 0xfacc15,
                 });
               }
             }
@@ -3234,25 +3240,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             }
           }
 
-          // Cập nhật hạt 3D
-          for (let i = 0; i < MAX_PARTICLES; i++) {
-            const p = particles[i];
-            if (!p.active) continue;
-            p.life -= dt;
-            if (p.life <= 0) {
-              p.active = false;
-              p.sprite.visible = false;
-              continue;
-            }
-            p.vy += p.gravity * dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.z += p.vz * dt;
-            const ratio = p.life / p.maxLife;
-            p.sprite.position.set(p.x, Math.max(0.1, p.y), p.z);
-            p.sprite.scale.setScalar(p.size * (1 + (1 - ratio) * p.grow));
-            p.mat.opacity = ratio * (p.mat.blending === THREE.NormalBlending ? 0.5 : 0.95);
-          }
+          // Cập nhật Tia Lửa Đạn Đạo 3D (có trọng lực & nảy trên mặt đường nhựa)
+          sparkSystem.update(dt);
 
           // Cập nhật vệt sáng mặt đường The Flash (mờ dần mượt mà sau khi nhân vật chạy qua)
           for (let rg = 0; rg < FLASH_TRAIL_MAX; rg++) {
@@ -3385,14 +3374,26 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
           camera.position.set(camPose.posX, camPose.posY, camPose.posZ);
           camera.lookAt(camPose.lookX, camPose.lookY, camPose.lookZ);
-          skyDome.position.copy(camera.position);
 
-          // Di chuyển nguồn sáng Mặt Trời & Shadow Camera bám sát nhân vật đang được quay để đổ bóng thật siêu sắc nét
-          if (sunLight.castShadow) {
-            sunLight.position.set(camPose.lookX + 32, 54, camPose.lookZ - 26);
-            sunLight.target.position.set(camPose.lookX, 0, camPose.lookZ);
-            sunLight.target.updateMatrixWorld();
-          }
+          // Cập nhật Bầu Trời Vật Lý (PBL Sky + Sao Đêm), Cảnh Sắc Thời Gian Thực & Đổ Bóng Theo Độ Cao Nguồn Sáng!
+          const activeScenery = getActiveMap().theme.sceneryType;
+          realTimeSky.update({
+            mode: timeOfDayModeRef.current,
+            tSec,
+            focusX: camPose.lookX,
+            focusZ: camPose.lookZ,
+            cameraPos: camera.position,
+            sunLight,
+            hemiLight,
+            rimLight,
+            fog: scene.fog,
+            cloudMat,
+            grassMat,
+            leafMats: [leafMatA, leafMatB, leafMatC],
+            lakeMat,
+            streetLampMat: towerGlowMat,
+            isForcedNightCity: activeScenery === 'city' && timeOfDayModeRef.current === 'realtime' ? false : false,
+          });
 
           const cw = container.clientWidth || 540;
           const ch = container.clientHeight || 960;
@@ -3469,7 +3470,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               const savedBldgEmissiveInt = buildingBodyMat.emissiveIntensity;
 
               scene.fog.density = 0;
-              skyDome.visible = false;
+              realTimeSky.sky.visible = false;
+              realTimeSky.sunDisc.visible = false;
+              realTimeSky.stars.visible = false;
               scene.background = new THREE.Color(isNightCity ? 0x0b1120 : 0x1e293b);
               if (isNightCity) {
                 hemiLight.intensity = 1.95;
@@ -3506,10 +3509,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 buildingBodyMat.emissive.setHex(savedBldgEmissive);
                 buildingBodyMat.emissiveIntensity = savedBldgEmissiveInt;
               }
-              skyDome.visible = true;
+              realTimeSky.sky.visible = true;
+              realTimeSky.sunDisc.visible = true;
+              realTimeSky.stars.visible = true;
               scene.background = savedBg;
               scene.fog.density = savedFog;
-              skyDome.position.copy(camera.position);
 
               // Cập nhật & Chiếu tọa độ thẻ vị trí người chơi trên màn hình Drone Toàn Cảnh
               const droneRacers = allRacers.slice(0, MAX_DRONE_TAGS);
@@ -3633,6 +3637,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         cleanupFn = () => {
           ro.disconnect();
           dracoLoader.dispose();
+          asphaltPBR.dispose();
+          grassPBR.dispose();
+          sparkSystem.dispose();
+          realTimeSky.dispose();
           pmrem.dispose();
           envTex.dispose();
           renderer.dispose();

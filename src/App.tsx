@@ -75,6 +75,8 @@ export default function App() {
     setDroneRect,
     graphicsQuality,
     setGraphicsQuality,
+    timeOfDayMode,
+    setTimeOfDayMode,
     cameraMode,
     setCameraMode,
     aiCameraModes,
@@ -357,6 +359,7 @@ export default function App() {
         onDroneRectChange={setDroneRect}
         canEditDrone={!IS_STAGE}
         graphicsQuality={graphicsQuality}
+        timeOfDayMode={timeOfDayMode}
         onFpsSample={reportStageFps}
       />
 
@@ -2019,17 +2022,17 @@ export default function App() {
                       {
                         id: 'low',
                         label: '⚡ Thấp (Nhẹ máy)',
-                        desc: 'Bóng nhẹ · Ít cây · Tối đa FPS',
+                        desc: 'Tắt bóng đổ · Địa hình gọn · Tối đa FPS',
                       },
                       {
                         id: 'medium',
                         label: '⚖️ Trung Bình',
-                        desc: 'Bóng nhân vật thật 1024px · Cây & cỏ 3D',
+                        desc: 'Texture 2K PBR · Bóng thật 2048px',
                       },
                       {
                         id: 'high',
-                        label: '✨ Cao (Đẹp nhất)',
-                        desc: 'Bóng thật 2048px · Cây & cỏ dày chi tiết',
+                        label: '✨ Cao (Ultra PBR)',
+                        desc: 'Texture 2K PBR · Bóng siêu nét 4096px',
                       },
                     ] as const
                   ).map((q) => {
@@ -2050,6 +2053,53 @@ export default function App() {
                             }`}
                         >
                           {q.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Cảnh sắc & Nguồn sáng Vật lý (PBL) thay đổi theo Thời Gian Thực */}
+              <div className="flex flex-col gap-2 bg-slate-950/80 rounded-xl p-3 border border-indigo-400/30">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-black text-indigo-300">
+                    🌅 Cảnh Sắc & Ánh Sáng PBL Theo Thời Gian Thực:
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Nguồn sáng càng cao → Bóng đổ càng đậm & rõ nét
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px] font-black">
+                  {(
+                    [
+                      { id: 'realtime', label: '🕒 Giờ Thực Tế (24h)', desc: 'Theo đúng đồng hồ ngoài đời' },
+                      { id: 'cycle', label: '🔄 Chu Kỳ Nhanh (5p)', desc: 'Tự trôi Sáng → Trưa → Chiều → Đêm' },
+                      { id: 'noon', label: '☀️ Giữa Trưa', desc: 'Nắng đỉnh đầu · Bóng siêu rõ' },
+                      { id: 'dawn', label: '🌅 Bình Minh', desc: 'Nắng sớm vàng hồng · Bóng dài' },
+                      { id: 'sunset', label: '🌇 Hoàng Hôn', desc: 'Chiều rực lửa · Phản xạ mặt đường' },
+                      { id: 'night', label: '🌙 Đêm Đầy Sao', desc: 'Ánh trăng & Đèn đường tự bật' },
+                    ] as const
+                  ).map((m) => {
+                    const active = timeOfDayMode === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setTimeOfDayMode(m.id)}
+                        className={`rounded-xl p-2 text-left border transition ${
+                          active
+                            ? 'bg-indigo-400 text-slate-950 border-indigo-100 shadow-[0_0_14px_rgba(129,140,248,0.4)]'
+                            : 'bg-slate-900/90 text-slate-200 border-white/10 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div>{m.label}</div>
+                        <div
+                          className={`mt-0.5 text-[9.5px] font-semibold leading-tight ${
+                            active ? 'text-slate-900' : 'text-slate-400'
+                          }`}
+                        >
+                          {m.desc}
                         </div>
                       </button>
                     );

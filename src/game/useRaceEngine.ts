@@ -11,6 +11,7 @@ import {
   RACE_CONSTANTS,
   RacerState,
   SpectatorInfo,
+  TimeOfDayMode,
   UserProfile,
   VipBannerEvent,
 } from './raceTypes';
@@ -226,6 +227,24 @@ export function useRaceEngine() {
       }
     } catch {}
     return 'medium';
+  });
+  const timeOfDayModeRef = useRef<TimeOfDayMode>('realtime');
+  const [timeOfDayMode, setTimeOfDayModeState] = useState<TimeOfDayMode>(() => {
+    try {
+      const m = localStorage.getItem('timeOfDayMode');
+      if (
+        m === 'realtime' ||
+        m === 'cycle' ||
+        m === 'dawn' ||
+        m === 'noon' ||
+        m === 'sunset' ||
+        m === 'night'
+      ) {
+        timeOfDayModeRef.current = m;
+        return m;
+      }
+    } catch {}
+    return 'realtime';
   });
   const [isMcSpeaking, setIsMcSpeaking] = useState<boolean>(false);
   const [focusedRacer, setFocusedRacer] = useState<(RacerState & { gapSec: number }) | null>(null);
@@ -777,6 +796,7 @@ export function useRaceEngine() {
       droneCamOn: droneCamOnRef.current,
       droneRect: droneRectRef.current,
       graphicsQuality: graphicsQualityRef.current,
+      timeOfDayMode: timeOfDayModeRef.current,
       cameraMode: cameraModeRef.current,
       aiCameraModes: aiCameraModesRef.current,
       webcamEnabled: webcamEnabledRef.current,
@@ -854,6 +874,18 @@ export function useRaceEngine() {
     ) {
       graphicsQualityRef.current = snap.graphicsQuality;
       setGraphicsQualityState(snap.graphicsQuality);
+    }
+    if (
+      (snap.timeOfDayMode === 'realtime' ||
+        snap.timeOfDayMode === 'cycle' ||
+        snap.timeOfDayMode === 'dawn' ||
+        snap.timeOfDayMode === 'noon' ||
+        snap.timeOfDayMode === 'sunset' ||
+        snap.timeOfDayMode === 'night') &&
+      snap.timeOfDayMode !== timeOfDayModeRef.current
+    ) {
+      timeOfDayModeRef.current = snap.timeOfDayMode;
+      setTimeOfDayModeState(snap.timeOfDayMode);
     }
     if (
       typeof snap.cameraMode === 'string' &&
@@ -1743,6 +1775,17 @@ export function useRaceEngine() {
         } else if (action === 'setAfkTimeout' && typeof value === 'number') {
           afkTimeoutSecRef.current = value;
           setAfkTimeoutSecState(value);
+        } else if (
+          action === 'setTimeOfDayMode' &&
+          (value === 'realtime' ||
+            value === 'cycle' ||
+            value === 'dawn' ||
+            value === 'noon' ||
+            value === 'sunset' ||
+            value === 'night')
+        ) {
+          timeOfDayModeRef.current = value;
+          setTimeOfDayModeState(value);
         } else if (action === 'speak' && typeof value === 'string' && value.trim()) {
           pushFeed(`🎙️ BLV: ${value.trim()}`, 'dragon');
           speakCommentator(value.trim(), true);
@@ -2797,6 +2840,19 @@ export function useRaceEngine() {
     [postControl, pushRaceSync],
   );
 
+  const changeTimeOfDayMode = useCallback(
+    (mode: TimeOfDayMode) => {
+      timeOfDayModeRef.current = mode;
+      setTimeOfDayModeState(mode);
+      try {
+        localStorage.setItem('timeOfDayMode', mode);
+      } catch {}
+      postControl('setTimeOfDayMode', mode);
+      pushRaceSync(true);
+    },
+    [postControl, pushRaceSync],
+  );
+
   const handleWebcamStatusChange = useCallback((st: WebcamStatus) => {
     webcamStatusRef.current = st;
     setWebcamStatusState(st);
@@ -2865,6 +2921,8 @@ export function useRaceEngine() {
     setDroneRect: changeDroneRect,
     graphicsQuality,
     setGraphicsQuality: changeGraphicsQuality,
+    timeOfDayMode,
+    setTimeOfDayMode: changeTimeOfDayMode,
     cameraMode,
     setCameraMode: changeCameraMode,
     aiCameraModes,
