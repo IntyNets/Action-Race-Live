@@ -606,9 +606,9 @@ export function createBallisticSparkSystem(THREE: any, scene: any, maxSparks = 2
  * - Sinh đường gãy khúc tự nhiên (Midpoint Displacement) kèm nhánh phụ phóng xuống mặt đường.
  */
 export function createJaggedLightningGroup(THREE: any) {
-  const SEGS = 8; // thân chính 8 đoạn + 2 nhánh phụ x 3 đoạn = 14 đoạn x 2 mặt chữ thập = 56 tam giác!
+  const SEGS = 10; // thân chính 10 đoạn + 2 nhánh phụ x 3 đoạn = 16 đoạn x 2 mặt chữ thập 3D
   const TOTAL_SEGS = SEGS + 6;
-  const VERTS = TOTAL_SEGS * 4 * 2; // 2 mặt phẳng vuông góc nhau cho mỗi đoạn -> nhìn góc nào cũng có khối 3D!
+  const VERTS = TOTAL_SEGS * 4 * 2;
   const INDICES_COUNT = TOTAL_SEGS * 6 * 2;
 
   const makeRibbonGeo = () => {
@@ -634,7 +634,7 @@ export function createJaggedLightningGroup(THREE: any) {
   };
 
   const coreMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
+    color: 0xe0f2fe,
     transparent: true,
     opacity: 0.98,
     blending: THREE.AdditiveBlending,
@@ -643,32 +643,54 @@ export function createJaggedLightningGroup(THREE: any) {
   });
 
   const plasmaMat = new THREE.MeshBasicMaterial({
-    color: 0x38bdf8,
+    color: 0x00b4ff,
     transparent: true,
-    opacity: 0.58,
+    opacity: 0.68,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
 
-  const grp = new THREE.Group();
-  const BOLT_COUNT = 4;
+  const grp = new THREE.Group(); // Tia sét plasma kéo đuôi phía sau
+  const bodyGrp = new THREE.Group(); // Tia sét năng lượng plasma xanh chạy dọc & xoắn quanh cơ thể nhân vật!
+
   interface BoltMeshPair {
     coreGeo: any;
     plasmaGeo: any;
     nextSnapAt: number;
+    mode: 'trail' | 'helix' | 'vertical';
+    seed: number;
     anchor: [number, number, number];
     endTarget: [number, number, number];
   }
   const bolts: BoltMeshPair[] = [];
-  const anchors: Array<{ a: [number, number, number]; b: [number, number, number] }> = [
-    { a: [-0.55, 1.85, -0.15], b: [-1.05, 0.08, -3.45] }, // Vai trái phóng hồ quang chạm mặt đường
-    { a: [0.55, 1.85, -0.15], b: [1.05, 0.08, -3.45] }, // Vai phải phóng hồ quang chạm mặt đường
-    { a: [0.0, 2.35, -0.25], b: [0.0, 1.15, -3.95] }, // Đỉnh lưng kéo đuôi sét dài
-    { a: [-0.35, 1.05, -0.2], b: [0.42, 0.12, -2.85] }, // Chân quấn chéo tia điện
-  ];
 
-  for (let b = 0; b < BOLT_COUNT; b++) {
+  // 1) 5 Tia Plasma Năng Lượng Xanh chạy dọc & quấn xoắn ốc từ cổ chân lên dọc thân, ngực, vai & đầu nhân vật
+  for (let hb = 0; hb < 5; hb++) {
+    const coreGeo = makeRibbonGeo();
+    const plasmaGeo = makeRibbonGeo();
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    const plasmaMesh = new THREE.Mesh(plasmaGeo, plasmaMat);
+    bodyGrp.add(plasmaMesh, coreMesh);
+    const side = hb % 2 === 0 ? -1 : 1;
+    bolts.push({
+      coreGeo,
+      plasmaGeo,
+      nextSnapAt: 0,
+      mode: hb < 3 ? 'helix' : 'vertical',
+      seed: hb * ((Math.PI * 2) / 3),
+      anchor: [side * 0.48, 0.08, 0.12],
+      endTarget: [side * 0.52, 2.52, -0.08],
+    });
+  }
+
+  // 2) 3 Tia Plasma Xanh phóng vút ra sau gót chân & vai tạo luồng điện bứt tốc
+  const trailAnchors: Array<{ a: [number, number, number]; b: [number, number, number] }> = [
+    { a: [-0.52, 1.75, -0.15], b: [-0.95, 0.1, -3.25] },
+    { a: [0.52, 1.75, -0.15], b: [0.95, 0.1, -3.25] },
+    { a: [0.0, 1.25, -0.22], b: [0.0, 0.35, -3.65] },
+  ];
+  for (let b = 0; b < trailAnchors.length; b++) {
     const coreGeo = makeRibbonGeo();
     const plasmaGeo = makeRibbonGeo();
     const coreMesh = new THREE.Mesh(coreGeo, coreMat);
@@ -678,11 +700,15 @@ export function createJaggedLightningGroup(THREE: any) {
       coreGeo,
       plasmaGeo,
       nextSnapAt: 0,
-      anchor: anchors[b].a,
-      endTarget: anchors[b].b,
+      mode: 'trail',
+      seed: b * 1.7,
+      anchor: trailAnchors[b].a,
+      endTarget: trailAnchors[b].b,
     });
   }
+
   grp.visible = false;
+  bodyGrp.visible = false;
 
   const writeSegQuad = (
     arr: Float32Array,
@@ -699,9 +725,8 @@ export function createJaggedLightningGroup(THREE: any) {
     const dy = by - ay;
     const dz = bz - az;
     const len = Math.max(0.001, Math.hypot(dx, dy, dz));
-    // 2 vector vuông góc với đoạn tia sét để tạo dải chữ thập 3D
     let p1x = -dz / len;
-    let p1y = 0;
+    const p1y = 0;
     let p1z = dx / len;
     const p1Len = Math.hypot(p1x, p1z);
     if (p1Len < 0.01) {
@@ -711,7 +736,6 @@ export function createJaggedLightningGroup(THREE: any) {
       p1x /= p1Len;
       p1z /= p1Len;
     }
-    // Mặt vuông góc thứ 2
     const p2x = (dy * p1z - dz * p1y) / len;
     const p2y = (dz * p1x - dx * p1z) / len;
     const p2z = (dx * p1y - dy * p1x) / len;
@@ -743,33 +767,60 @@ export function createJaggedLightningGroup(THREE: any) {
   const ptsY = new Float32Array(SEGS + 1);
   const ptsZ = new Float32Array(SEGS + 1);
 
-  const rebuildBolt = (bolt: BoltMeshPair, intensityScale: number) => {
-    const [ax, ay, az] = bolt.anchor;
-    const [bx, by, bz] = bolt.endTarget;
-    ptsX[0] = ax;
-    ptsY[0] = ay;
-    ptsZ[0] = az;
-    ptsX[SEGS] = bx + (Math.random() - 0.5) * 0.55;
-    ptsY[SEGS] = Math.max(0.06, by + (Math.random() - 0.5) * 0.35);
-    ptsZ[SEGS] = bz - Math.random() * 0.65;
+  const rebuildBolt = (bolt: BoltMeshPair, tSec: number, intensityScale: number) => {
+    if (bolt.mode === 'helix') {
+      // Tia plasma xanh chạy dọc & quấn xoắn quanh người từ chân (y=0.08) lên đỉnh vai/đầu (y=2.55)
+      const basePhase = -tSec * 9.5 + bolt.seed;
+      for (let s = 0; s <= SEGS; s++) {
+        const t = s / SEGS;
+        const ang = basePhase + t * Math.PI * 2.35;
+        // Bán kính ôm sát chân -> nở nhẹ quanh thân/vai -> thu gọn trên đỉnh
+        const rad = (0.44 + Math.sin(t * Math.PI) * 0.24) + (Math.random() - 0.5) * 0.14;
+        ptsX[s] = Math.cos(ang) * rad + (Math.random() - 0.5) * 0.12;
+        ptsY[s] = 0.08 + t * 2.48 + (Math.random() - 0.5) * 0.08;
+        ptsZ[s] = Math.sin(ang) * (rad * 0.82) + (Math.random() - 0.5) * 0.12;
+      }
+    } else if (bolt.mode === 'vertical') {
+      // Tia plasma chạy dọc sát hai bên sườn, cánh tay & bờ vai nhân vật
+      const side = bolt.anchor[0] < 0 ? -1 : 1;
+      for (let s = 0; s <= SEGS; s++) {
+        const t = s / SEGS;
+        const env = Math.sin(t * Math.PI);
+        const wave = Math.sin(t * 7.0 - tSec * 14.0 + bolt.seed) * 0.16;
+        ptsX[s] = side * (0.42 + env * 0.26) + wave + (Math.random() - 0.5) * 0.16;
+        ptsY[s] = 0.1 + t * 2.42 + (Math.random() - 0.5) * 0.07;
+        ptsZ[s] = Math.cos(t * 6.0 - tSec * 12.0 + bolt.seed) * 0.28 + (Math.random() - 0.5) * 0.15;
+      }
+    } else {
+      const [ax, ay, az] = bolt.anchor;
+      const [bx, by, bz] = bolt.endTarget;
+      ptsX[0] = ax;
+      ptsY[0] = ay;
+      ptsZ[0] = az;
+      ptsX[SEGS] = bx + (Math.random() - 0.5) * 0.55;
+      ptsY[SEGS] = Math.max(0.06, by + (Math.random() - 0.5) * 0.35);
+      ptsZ[SEGS] = bz - Math.random() * 0.65;
 
-    // Nội suy kèm nhiễu điện gãy khúc tự nhiên (Midpoint Jitter)
-    for (let s = 1; s < SEGS; s++) {
-      const t = s / SEGS;
-      const env = Math.sin(t * Math.PI); // phình rộng ở giữa, hội tụ ở 2 đầu
-      ptsX[s] = ptsX[0] + (ptsX[SEGS] - ptsX[0]) * t + (Math.random() - 0.5) * 0.72 * env;
-      ptsY[s] = Math.max(
-        0.06,
-        ptsY[0] + (ptsY[SEGS] - ptsY[0]) * t + (Math.random() - 0.5) * 0.62 * env,
-      );
-      ptsZ[s] = ptsZ[0] + (ptsZ[SEGS] - ptsZ[0]) * t + (Math.random() - 0.5) * 0.25;
+      for (let s = 1; s < SEGS; s++) {
+        const t = s / SEGS;
+        const env = Math.sin(t * Math.PI);
+        ptsX[s] = ptsX[0] + (ptsX[SEGS] - ptsX[0]) * t + (Math.random() - 0.5) * 0.68 * env;
+        ptsY[s] = Math.max(
+          0.06,
+          ptsY[0] + (ptsY[SEGS] - ptsY[0]) * t + (Math.random() - 0.5) * 0.56 * env,
+        );
+        ptsZ[s] = ptsZ[0] + (ptsZ[SEGS] - ptsZ[0]) * t + (Math.random() - 0.5) * 0.25;
+      }
     }
 
     const coreArr = bolt.coreGeo.attributes.position.array as Float32Array;
     const plasmaArr = bolt.plasmaGeo.attributes.position.array as Float32Array;
+    const isBody = bolt.mode !== 'trail';
 
     for (let s = 0; s < SEGS; s++) {
-      const taper = (1 - (s / SEGS) * 0.55) * intensityScale;
+      const taper =
+        (isBody ? 0.72 + Math.sin((s / SEGS) * Math.PI) * 0.45 : 1 - (s / SEGS) * 0.55) *
+        intensityScale;
       writeSegQuad(
         coreArr,
         s,
@@ -779,7 +830,7 @@ export function createJaggedLightningGroup(THREE: any) {
         ptsX[s + 1],
         ptsY[s + 1],
         ptsZ[s + 1],
-        0.028 * taper,
+        (isBody ? 0.024 : 0.026) * taper,
       );
       writeSegQuad(
         plasmaArr,
@@ -790,12 +841,12 @@ export function createJaggedLightningGroup(THREE: any) {
         ptsX[s + 1],
         ptsY[s + 1],
         ptsZ[s + 1],
-        0.095 * taper,
+        (isBody ? 0.088 : 0.092) * taper,
       );
     }
 
-    // 2 nhánh tia sét phụ (Fork Branches) tách ra từ đốt thứ 2 và đốt thứ 5
-    const forkRoots = [2, 5];
+    // 2 nhánh tia plasma phụ (Fork Branches) tách ra tự nhiên quanh cơ thể
+    const forkRoots = [3, 7];
     let segCursor = SEGS;
     for (let f = 0; f < 2; f++) {
       const rIdx = forkRoots[f];
@@ -804,12 +855,14 @@ export function createJaggedLightningGroup(THREE: any) {
       let fz = ptsZ[rIdx];
       const dirSide = f === 0 ? -1 : 1;
       for (let fs = 0; fs < 3; fs++) {
-        const nx = fx + dirSide * (0.18 + Math.random() * 0.28);
-        const ny = Math.max(0.05, fy - (0.16 + Math.random() * 0.26));
-        const nz = fz - (0.32 + Math.random() * 0.35);
+        const nx = fx + dirSide * (isBody ? 0.12 + Math.random() * 0.18 : 0.18 + Math.random() * 0.26);
+        const ny = isBody
+          ? Math.max(0.08, fy + (0.14 + Math.random() * 0.18))
+          : Math.max(0.05, fy - (0.16 + Math.random() * 0.24));
+        const nz = fz + (isBody ? (Math.random() - 0.5) * 0.26 : -(0.3 + Math.random() * 0.34));
         const fTaper = (1 - fs / 3) * 0.65 * intensityScale;
-        writeSegQuad(coreArr, segCursor, fx, fy, fz, nx, ny, nz, 0.018 * fTaper);
-        writeSegQuad(plasmaArr, segCursor, fx, fy, fz, nx, ny, nz, 0.062 * fTaper);
+        writeSegQuad(coreArr, segCursor, fx, fy, fz, nx, ny, nz, 0.016 * fTaper);
+        writeSegQuad(plasmaArr, segCursor, fx, fy, fz, nx, ny, nz, 0.058 * fTaper);
         fx = nx;
         fy = ny;
         fz = nz;
@@ -821,19 +874,24 @@ export function createJaggedLightningGroup(THREE: any) {
     bolt.plasmaGeo.attributes.position.needsUpdate = true;
   };
 
-  const update = (tSec: number, plasmaColorHex: number, coreTintHex = 0xffffff, intensityScale = 1.0) => {
+  const update = (
+    tSec: number,
+    plasmaColorHex = 0x00b4ff,
+    coreTintHex = 0xe0f2fe,
+    intensityScale = 1.0,
+  ) => {
     plasmaMat.color.setHex(plasmaColorHex);
     coreMat.color.setHex(coreTintHex);
-    plasmaMat.opacity = 0.48 + Math.random() * 0.24;
+    plasmaMat.opacity = 0.58 + Math.random() * 0.26;
     for (let b = 0; b < bolts.length; b++) {
       if (tSec >= bolts[b].nextSnapAt) {
-        bolts[b].nextSnapAt = tSec + 0.032 + Math.random() * 0.028; // phóng hồ quang ~28Hz sống động
-        rebuildBolt(bolts[b], intensityScale);
+        bolts[b].nextSnapAt = tSec + 0.028 + Math.random() * 0.024;
+        rebuildBolt(bolts[b], tSec, intensityScale);
       }
     }
   };
 
-  return { grp, update, coreMat, plasmaMat };
+  return { grp, bodyGrp, update, coreMat, plasmaMat };
 }
 
 /**
@@ -1143,64 +1201,24 @@ export function createPhysicalSkyAndRealTimeSystem(
 }
 
 /**
- * 5) Hiệu ứng Ánh Sáng Quả Cầu Đổ Bóng Hoa Văn Xoay chuẩn mẫu chính thức Three.js:
- *    https://threejs.org/examples/webgl_shadowmap_pointlight.html
- *    - Nhân vật GIỮ NGUYÊN MÀU GỐC 100% (không nhuộm emissive làm đổi màu nhân vật).
- *    - 2 quả cầu PointLight (Xanh Lam Điện 0x0088ff & Cam Vàng Ấm 0xff8844) có vỏ cầu sọc alphaMap (repeat 1, 4.5)
- *      xoay tròn và castShadow thật lên cơ thể nhân vật cùng mặt đường xung quanh!
+ * 5) Hệ Thống Ánh Sáng Điểm Động Làm Nổi Bật Nhân Vật Khi Tăng Tốc (KHÔNG dùng 2 quả cầu hiển thị):
+ *    - Mượn hiệu ứng chiếu sáng & đổ bóng động từ PointLight: nhân vật giữ nguyên 100% màu gốc,
+ *      nhưng được tôn khối 3D cực sắc nét bởi luồng sáng Plasma Xanh Điện (0x00b4ff) + Rim Trắng Băng (0xe0f2fe)
+ *      xoay mềm quanh người kết hợp Tia Sét Plasma Xanh chạy dọc quanh cơ thể!
  */
-export function createStripedAlphaTexture(THREE: any) {
-  const cv = document.createElement('canvas');
-  cv.width = 2;
-  cv.height = 2;
-  const ctx = cv.getContext('2d')!;
-  ctx.fillStyle = 'white';
-  ctx.fillRect(0, 1, 2, 1);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.repeat.set(1, 4.5);
-  return tex;
-}
+export function createHeroPlasmaPointLightRig(THREE: any, scene: any) {
+  const keyLight = new THREE.PointLight(0x00b4ff, 0, 26, 1.25);
+  keyLight.castShadow = true;
+  keyLight.shadow.bias = -0.003;
+  keyLight.shadow.mapSize.set(512, 512);
+  keyLight.shadow.camera.near = 0.3;
+  keyLight.shadow.camera.far = 26;
+  keyLight.visible = false;
+  scene.add(keyLight);
 
-export function createPointLightShadowOrbPair(THREE: any, scene: any, stripedTex: any) {
-  const makeOrb = (colorHex: number) => {
-    const light = new THREE.PointLight(colorHex, 0, 24, 1.35);
-    light.castShadow = true;
-    light.shadow.bias = -0.004;
-    light.shadow.mapSize.set(512, 512);
-    light.shadow.camera.near = 0.25;
-    light.shadow.camera.far = 24;
-
-    const coreGeo = new THREE.SphereGeometry(0.17, 14, 8);
-    const coreMat = new THREE.MeshBasicMaterial({ color: colorHex });
-    coreMat.color.multiplyScalar(2.2);
-    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-    light.add(coreMesh);
-
-    const shellGeo = new THREE.SphereGeometry(0.88, 32, 12);
-    const shellMat = new THREE.MeshPhongMaterial({
-      color: 0xffffff,
-      emissive: colorHex,
-      emissiveIntensity: 0.28,
-      side: THREE.DoubleSide,
-      alphaMap: stripedTex,
-      alphaTest: 0.5,
-    });
-    const shellMesh = new THREE.Mesh(shellGeo, shellMat);
-    shellMesh.castShadow = true;
-    shellMesh.receiveShadow = true;
-    light.add(shellMesh);
-
-    light.visible = false;
-    scene.add(light);
-    return { light, coreMesh, coreMat, shellMesh, shellMat, coreGeo, shellGeo };
-  };
-
-  const orbA = makeOrb(0x0088ff);
-  const orbB = makeOrb(0xff8844);
+  const rimLight = new THREE.PointLight(0xe0f2fe, 0, 22, 1.3);
+  rimLight.visible = false;
+  scene.add(rimLight);
 
   const update = (
     active: boolean,
@@ -1210,91 +1228,60 @@ export function createPointLightShadowOrbPair(THREE: any, scene: any, stripedTex
     tSec: number,
     enableShadows: boolean,
   ) => {
-    orbA.light.visible = active;
-    orbB.light.visible = active;
+    keyLight.visible = active;
+    rimLight.visible = active;
     if (!active) {
-      orbA.light.intensity = 0;
-      orbB.light.intensity = 0;
+      keyLight.intensity = 0;
+      rimLight.intensity = 0;
       return;
     }
 
-    orbA.light.castShadow = enableShadows;
-    orbB.light.castShadow = enableShadows;
-    orbA.light.intensity = 9.5;
-    orbB.light.intensity = 9.5;
+    keyLight.castShadow = enableShadows;
+    // Xung nhịp ánh sáng đồng điệu với tia sét năng lượng plasma xanh chạy quanh người
+    const flicker = 1.0 + Math.sin(tSec * 28.0) * 0.14;
+    keyLight.intensity = 10.5 * flicker;
+    rimLight.intensity = 6.8 * flicker;
 
-    // Quỹ đạo Lissajous 3D bay lượn mượt mà quanh nhân vật giống webgl_shadowmap_pointlight.html
-    const timeA = tSec * 2.15;
-    orbA.light.position.set(
-      centerX + Math.sin(timeA * 1.2) * 1.85,
-      centerY + 1.35 + Math.cos(timeA * 0.9) * 0.72,
-      centerZ + Math.cos(timeA * 1.2) * 1.85,
+    const ang = tSec * 2.2;
+    keyLight.position.set(
+      centerX + Math.sin(ang) * 1.65,
+      centerY + 1.55 + Math.cos(ang * 0.85) * 0.45,
+      centerZ + Math.cos(ang) * 1.65,
     );
-    orbA.shellMesh.rotation.y = timeA * 1.35;
-    orbA.shellMesh.rotation.z = timeA * 0.85;
-
-    const timeB = timeA + Math.PI;
-    orbB.light.position.set(
-      centerX + Math.sin(timeB * 1.2) * 1.85,
-      centerY + 1.35 + Math.sin(timeB * 0.9) * 0.72,
-      centerZ + Math.cos(timeB * 1.2) * 1.85,
+    rimLight.position.set(
+      centerX - Math.sin(ang) * 1.55,
+      centerY + 1.95 - Math.cos(ang * 0.85) * 0.35,
+      centerZ - Math.cos(ang) * 1.55,
     );
-    orbB.shellMesh.rotation.y = -timeB * 1.25;
-    orbB.shellMesh.rotation.x = timeB * 0.75;
   };
 
   const dispose = () => {
-    for (const o of [orbA, orbB]) {
-      o.coreGeo.dispose();
-      o.coreMat.dispose();
-      o.shellGeo.dispose();
-      o.shellMat.dispose();
-    }
+    if (keyLight.shadow?.map) keyLight.shadow.map.dispose();
   };
 
-  return { orbA, orbB, update, dispose };
+  return { keyLight, rimLight, update, dispose };
 }
 
-/** Cặp quả cầu sọc xoay nhẹ (không tốn CubeShadowMap) cho các tay đua phụ cùng đang tăng tốc */
-export function createVisualStripedOrbs(THREE: any, stripedTex: any) {
-  const grp = new THREE.Group();
-  const coreGeo = new THREE.SphereGeometry(0.13, 10, 8);
-  const shellGeo = new THREE.SphereGeometry(0.46, 20, 10);
-
-  const buildOne = (hex: number) => {
-    const wrap = new THREE.Group();
-    const core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({ color: hex }));
-    const shell = new THREE.Mesh(
-      shellGeo,
-      new THREE.MeshBasicMaterial({
-        color: hex,
-        side: THREE.DoubleSide,
-        alphaMap: stripedTex,
-        alphaTest: 0.5,
-      }),
-    );
-    wrap.add(core, shell);
-    grp.add(wrap);
-    return { wrap, shell };
-  };
-
-  const a = buildOne(0x0088ff);
-  const b = buildOne(0xff8844);
-  grp.visible = false;
-
-  const update = (tSec: number, seed: number) => {
-    const t = tSec * 2.4 + seed;
-    a.wrap.position.set(Math.sin(t) * 1.35, 1.35 + Math.cos(t * 0.8) * 0.55, Math.cos(t) * 1.35);
-    a.shell.rotation.y = t * 1.6;
-    a.shell.rotation.z = t * 0.9;
-
-    const t2 = t + Math.PI;
-    b.wrap.position.set(Math.sin(t2) * 1.35, 1.35 + Math.sin(t2 * 0.8) * 0.55, Math.cos(t2) * 1.35);
-    b.shell.rotation.y = -t2 * 1.5;
-    b.shell.rotation.x = t2 * 0.85;
-  };
-
-  return { grp, update };
+/**
+ * Texture Quầng Sáng Lan Tỏa Mềm Mại (Gaussian Radial Falloff, tuyệt đối không có viền gắt)
+ * Dùng cho Đèn Đường tỏa sáng dịu rộng khắp mặt đường và bầu không khí đêm.
+ */
+export function createSoftRadialGlowTexture(THREE: any) {
+  const cv = document.createElement('canvas');
+  cv.width = 128;
+  cv.height = 128;
+  const ctx = cv.getContext('2d')!;
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0.0, 'rgba(255, 255, 255, 0.92)');
+  g.addColorStop(0.18, 'rgba(255, 252, 235, 0.58)');
+  g.addColorStop(0.42, 'rgba(255, 248, 220, 0.24)');
+  g.addColorStop(0.72, 'rgba(255, 245, 210, 0.06)');
+  g.addColorStop(1.0, 'rgba(255, 245, 210, 0.0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 /**

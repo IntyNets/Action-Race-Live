@@ -552,7 +552,18 @@ export function useRaceEngine() {
       platform: 'tiktok' | 'facebook' = 'tiktok',
     ): { racer: RacerState; created: boolean } => {
       const map = racersRef.current;
-      const existing = map.get(userId);
+      let existing = map.get(userId);
+      // Trên Facebook Live, DOM bình luận dùng id dạng fb_ten còn GraphQL / Sao đôi khi gửi numeric id của cùng 1 người:
+      // Tự động khớp theo nickname trên cùng nền tảng Facebook để không tạo trùng 2 nhân vật!
+      if (!existing && !isBot && platform === 'facebook' && nickname) {
+        const cleanNick = nickname.trim().toLowerCase();
+        for (const r of map.values()) {
+          if (!r.isBot && r.platform === 'facebook' && r.nickname.trim().toLowerCase() === cleanNick) {
+            existing = r;
+            break;
+          }
+        }
+      }
       if (existing) {
         if (avatar && !existing.avatar.startsWith('http') && avatar.startsWith('http')) {
           existing.avatar = avatar;
@@ -1350,23 +1361,46 @@ export function useRaceEngine() {
         if (payload.username) followersRef.current.add(payload.username);
       }
 
-      const existingRacer = racersRef.current.get(payload.userId);
-      // Nếu người chơi ĐÃ có mặt trên đường đua -> cập nhật tương tác & bình luận giúp tăng tốc (+TỐC)
+      let existingRacer = racersRef.current.get(payload.userId);
+      if (!existingRacer && payload.platform === 'facebook' && payload.nickname) {
+        const cleanNick = payload.nickname.trim().toLowerCase();
+        for (const r of racersRef.current.values()) {
+          if (!r.isBot && r.platform === 'facebook' && r.nickname.trim().toLowerCase() === cleanNick) {
+            existingRacer = r;
+            break;
+          }
+        }
+      }
+
+      const commentTrim = String(payload.comment || '').trim();
+      const isHeartOrLikeComment =
+        Boolean(commentTrim) &&
+        /^(?:[❤️♥️💖💗💓💘💝💞💕❣️😍🥰👍🔥👏🎉✨\s]+|thả tim|tha tim|tim+|like+|thích)$/iu.test(
+          commentTrim,
+        );
+
+      // Nếu người chơi ĐÃ có mặt trên đường đua -> cập nhật tương tác; nếu bình luận thả tim/like thì bật thẳng SPRINT!
       if (existingRacer) {
         existingRacer.lastInteractAt = performance.now();
         if (phaseRef.current !== 'podium') {
-          const now = performance.now();
-          if (now - existingRacer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
-            existingRacer.lastChatBoostAt = now;
-            applyBoost(existingRacer, 'chat', 1800, '💬 +TỐC');
+          if (isHeartOrLikeComment) {
+            applyBoost(existingRacer, 'sprint', 2400, '❤️ SPRINT');
+            playSprintSfx();
+            pushFeed(`❤️ ${existingRacer.nickname} thả tim / like kích hoạt SPRINT!`, 'sprint');
             pushRaceSync(true);
+          } else {
+            const now = performance.now();
+            if (now - existingRacer.lastChatBoostAt >= RACE_CONSTANTS.CHAT_COOLDOWN_MS) {
+              existingRacer.lastChatBoostAt = now;
+              applyBoost(existingRacer, 'chat', 1800, '💬 +TỐC');
+              pushRaceSync(true);
+            }
           }
         }
         return;
       }
 
-      // Luật vào đua mới: chỉ cần đã Follow kênh rồi thì nhắn BẤT KỲ 1 tin nhắn nào cũng được vào đua ngay!
-      const commentTrim = String(payload.comment || '').trim();
+      // Luật vào đua mới: chỉ cần đã Follow kênh (hoặc Facebook Live) thì nhắn BẤT KỲ 1 tin nhắn nào cũng được vào đua ngay!
       if (!commentTrim) return;
 
       const savedProf =
@@ -1413,7 +1447,7 @@ export function useRaceEngine() {
         return;
       }
 
-      ensureRacer(
+      const { racer } = ensureRacer(
         payload.userId,
         payload.username,
         payload.nickname,
@@ -1421,6 +1455,9 @@ export function useRaceEngine() {
         false,
         payload.platform || 'tiktok',
       );
+      if (isHeartOrLikeComment) {
+        applyBoost(racer, 'sprint', 2600, '❤️ SPRINT');
+      }
       pushRaceSync(true);
     },
     [addSpectator, applyBoost, ensureRacer, pushFeed, pushRaceSync, queueForNextRound],
@@ -1435,21 +1472,85 @@ export function useRaceEngine() {
       likeCount: number;
       platform?: 'tiktok' | 'facebook';
     }) => {
-      // Thả tim chỉ tăng tốc Sprint cho những tay đua đã Follow + nhắn "join" vào sân
-      const racer = racersRef.current.get(payload.userId);
-      if (!racer || phaseRef.current === 'podium') return;
+      if (phaseRef.current === 'podium') return;
+      const count = Math.max(1, payload.likeCount || 1);
 
-      racer.likeEnergy += Math.max(1, payload.likeCount || 1);
+      // 1) Trường hợp cảm xúc / thả tim / like gộp từ Facebook Live (Graph API hoặc bộ đếm cảm xúc DOM: userId === 'fb_reaction')
+      if (
+        payload.platform === 'facebook' &&
+        (payload.userId === 'fb_reaction' || !payload.userId || payload.userId === 'viewer')
+      ) {
+        const all = Array.from(racersRef.current.values());
+        const fbHumans = all.filter((r) => !r.isBot && r.platform === 'facebook');
+        const anyHumans = all.filter((r) => !r.isBot);
+        const candidates =
+          fbHumans.length > 0
+            ? fbHumans
+            : anyHumans.length > 0
+              ? anyHumans
+              : all.slice(1, 3); // Nếu mới chỉ có Bot trên sân, kích hoạt Sprint cho nhóm bám đuổi để thấy ngay hiệu ứng!
+
+        if (candidates.length > 0) {
+          // Ưu tiên tay đua vừa tương tác gần nhất nhận tiếp sức SPRINT từ tim/like Facebook
+          candidates.sort((a, b) => b.lastInteractAt - a.lastInteractAt);
+          const boostTargets = candidates.slice(0, Math.min(3, Math.max(1, count)));
+          for (const target of boostTargets) {
+            target.lastInteractAt = performance.now();
+            applyBoost(target, 'sprint', 2400, '❤️ FB SPRINT');
+          }
+          playSprintSfx();
+          pushFeed(
+            `❤️ Facebook Live +${count} cảm xúc (Tim/Like) — Kích hoạt Plasma SPRINT cho ${boostTargets.map((t) => t.nickname).join(', ')}!`,
+            'sprint',
+          );
+          pushRaceSync(true);
+        }
+        return;
+      }
+
+      // 2) Tìm tay đua theo userId hoặc theo nickname (nếu trên Facebook Live)
+      let racer = racersRef.current.get(payload.userId);
+      if (!racer && payload.platform === 'facebook' && payload.nickname) {
+        const cleanNick = payload.nickname.trim().toLowerCase();
+        for (const r of racersRef.current.values()) {
+          if (!r.isBot && r.platform === 'facebook' && r.nickname.trim().toLowerCase() === cleanNick) {
+            racer = r;
+            break;
+          }
+        }
+        // Nếu người xem Facebook bấm Thả Tim / Like có tên tuổi rõ ràng mà chưa vào sân -> tự cho vào đua & bật SPRINT ngay!
+        if (
+          !racer &&
+          payload.nickname !== 'Khán giả Facebook' &&
+          payload.nickname !== 'Khán giả FB'
+        ) {
+          racer = ensureRacer(
+            payload.userId,
+            payload.username,
+            payload.nickname,
+            payload.avatar,
+            false,
+            'facebook',
+          ).racer;
+        }
+      }
+      if (!racer) return;
+
+      racer.likeEnergy += count;
       racer.lastInteractAt = performance.now();
-      if (racer.likeEnergy >= RACE_CONSTANTS.LIKE_SPRINT_THRESHOLD) {
+      const threshold = payload.platform === 'facebook' ? 1 : RACE_CONSTANTS.LIKE_SPRINT_THRESHOLD;
+      if (racer.likeEnergy >= threshold) {
         racer.likeEnergy = 0;
-        applyBoost(racer, 'sprint', 2200, '⚡ SPRINT');
+        applyBoost(racer, 'sprint', 2400, payload.platform === 'facebook' ? '❤️ FB SPRINT' : '⚡ SPRINT');
         playSprintSfx();
-        pushFeed(`⚡ ${racer.nickname} thả tim kích hoạt SPRINT!`, 'sprint');
+        pushFeed(
+          `${payload.platform === 'facebook' ? '❤️' : '⚡'} ${racer.nickname} thả tim/like kích hoạt SPRINT!`,
+          'sprint',
+        );
         pushRaceSync(true);
       }
     },
-    [applyBoost, pushFeed, pushRaceSync],
+    [applyBoost, ensureRacer, pushFeed, pushRaceSync],
   );
 
   const handleGift = useCallback(
@@ -2349,12 +2450,19 @@ export function useRaceEngine() {
       comment?: string;
       avatar?: string;
       stars?: number;
+      coins?: number;
+      giftName?: string;
+      likes?: number;
+      isLike?: boolean;
       comments?: Array<{
         nickname?: string;
         username?: string;
         comment?: string;
         avatar?: string;
         stars?: number;
+        coins?: number;
+        giftName?: string;
+        isLike?: boolean;
       }>;
     }) => {
       try {

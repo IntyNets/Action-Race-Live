@@ -772,6 +772,99 @@ function stopFacebookLive() {
   }
 }
 
+function normalizeFbUserId(rawUsername?: string, nickname?: string): string {
+  const cleanUser = String(rawUsername || '').trim();
+  if (cleanUser && cleanUser !== 'fb_reaction') return cleanUser;
+  const cleanNick = String(nickname || '').trim();
+  if (!cleanNick || cleanNick === 'Khán giả Facebook' || cleanNick === 'Khán giả FB') {
+    return cleanUser || 'fb_reaction';
+  }
+  const slug = cleanNick
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
+  return slug ? `fb_${slug}` : 'fb_user';
+}
+
+function parseFbStarsAndGift(opts: {
+  text?: string;
+  stars?: number;
+  coins?: number;
+  giftName?: string;
+  attachmentType?: string;
+  attachmentTitle?: string;
+}): { coins: number; giftName: string; isStickerLike: boolean } {
+  const rawText = `${opts.text || ''} ${opts.attachmentTitle || ''}`.trim();
+  const explicitCoins = Math.max(Number(opts.stars) || 0, Number(opts.coins) || 0);
+  if (explicitCoins > 0) {
+    return {
+      coins: explicitCoins,
+      giftName: opts.giftName || (Number(opts.stars) > 0 ? `⭐ ${explicitCoins} Sao Facebook` : '🎁 Quà Facebook'),
+      isStickerLike: false,
+    };
+  }
+
+  // 1) Nhận diện tặng Sao Facebook (hỗ trợ cả dấu chấm/phẩy phân tách hàng nghìn: 100 sao, 1.000 sao, ⭐ 50, sent 75 stars...)
+  const starMatch =
+    rawText.match(
+      /(?:đã gửi|vừa gửi|gửi tặng|đã tặng|tặng|ủng hộ|sent|gifted)\s+(\d[\d.,]*)\s*(?:sao|stars?|⭐)/i,
+    ) ||
+    rawText.match(/⭐\s*(\d[\d.,]*)\s*(?:sao|stars?)?/i) ||
+    rawText.match(/\b(\d[\d.,]*)\s*(?:sao|stars?)\s*⭐/i) ||
+    rawText.match(/^(\d{1,6})\s*(?:sao|stars?)$/i);
+
+  if (starMatch?.[1]) {
+    const parsed = parseInt(starMatch[1].replace(/[.,]/g, ''), 10);
+    if (parsed > 0 && parsed <= 1_000_000) {
+      return { coins: parsed, giftName: `⭐ ${parsed} Sao Facebook`, isStickerLike: false };
+    }
+  }
+
+  // 2) Nhận diện Quà Ảo Facebook Live (Virtual Gifts / Paid Gifts: "đã gửi một phần quà", "đã tặng quà", "sent a gift"...)
+  const giftActionMatch =
+    /(?:đã gửi|vừa gửi|đã tặng|gửi tặng)\s+(?:một\s+)?(?:phần quà|món quà|quà tặng|quà\b|siêu sao|vương miện|rồng|tên lửa|hoa hồng)/i.test(
+      rawText,
+    ) ||
+    /\b(?:sent a gift|sent a virtual gift|gifted a|virtual_gift)\b/i.test(rawText) ||
+    Boolean(opts.giftName);
+
+  if (giftActionMatch) {
+    const lower = `${opts.giftName || ''} ${rawText}`.toLowerCase();
+    let inferredCoins = 25; // Mặc định quà Facebook bật Tên Lửa
+    let gName = opts.giftName || '🎁 Quà Facebook Live';
+    if (/rồng|dragon|vương miện|crown|siêu xe|lâu đài|du thuyền|vip/i.test(lower)) {
+      inferredCoins = 120;
+      gName = opts.giftName || '🐉 Quà VIP Facebook';
+    } else if (/siêu nhân|superman|pháo hoa|kim cương|diamond/i.test(lower)) {
+      inferredCoins = 60;
+      gName = opts.giftName || '🦸 Siêu Quà Facebook';
+    } else if (/tên lửa|rocket|lửa|fire|xe đua/i.test(lower)) {
+      inferredCoins = 25;
+      gName = opts.giftName || '🚀 Tên Lửa Facebook';
+    } else if (/hoa|rose|tim|heart|cà phê|coffee/i.test(lower)) {
+      inferredCoins = 8;
+      gName = opts.giftName || '🌹 Quà Tặng Facebook';
+    }
+    return { coins: inferredCoins, giftName: gName, isStickerLike: false };
+  }
+
+  // 3) Nhận diện Nhãn dán Cảm xúc / Thả Tim / Like (Sticker Like/Heart không kèm chữ trên Facebook Live)
+  const attType = String(opts.attachmentType || '').toLowerCase();
+  const isSticker = attType.includes('sticker') || attType.includes('animated_image');
+  const isHeartOrLikeText =
+    /^(?:[❤️♥️💖💗💓💘💝💞💕❣️😍🥰👍🔥👏🎉✨\s]+|thả tim|tha tim|tim+|like+|thích)$/iu.test(
+      String(opts.text || '').trim(),
+    );
+
+  return {
+    coins: 0,
+    giftName: '',
+    isStickerLike: isSticker || (Boolean(opts.text?.trim()) && isHeartOrLikeText),
+  };
+}
+
 function handleFbComment(item: {
   id?: string;
   username?: string;
@@ -779,23 +872,36 @@ function handleFbComment(item: {
   comment?: string;
   avatar?: string;
   stars?: number;
+  coins?: number;
+  giftName?: string;
+  isLike?: boolean;
+  likeCount?: number;
+  attachmentType?: string;
+  attachmentTitle?: string;
 }) {
   const commentText = String(item.comment || '').trim();
   const nickname =
     String(item.nickname || 'Khán giả Facebook').trim() || 'Khán giả Facebook';
-  const username =
-    String(item.username || '').trim() ||
-    `fb_${
-      nickname
-        .normalize('NFKD')
-        .replace(/[^a-zA-Z0-9]/g, '')
-        .toLowerCase() || 'user'
-    }`;
+  const username = normalizeFbUserId(item.username, nickname);
+
+  const parsedGift = parseFbStarsAndGift({
+    text: commentText,
+    stars: item.stars,
+    coins: item.coins,
+    giftName: item.giftName,
+    attachmentType: item.attachmentType,
+    attachmentTitle: item.attachmentTitle,
+  });
+
+  const isLikeAction = Boolean(item.isLike) || parsedGift.isStickerLike;
+  if (!commentText && parsedGift.coins <= 0 && !isLikeAction) return false;
+
   const dedupKey =
-    item.id || `${username}:${commentText}:${Math.floor(Date.now() / 4000)}`;
+    item.id ||
+    `${username}:${commentText}:${parsedGift.coins}:${isLikeAction ? 'L' : ''}:${Math.floor(Date.now() / 2500)}`;
   if (seenFbCommentIds.has(dedupKey)) return false;
   seenFbCommentIds.add(dedupKey);
-  if (seenFbCommentIds.size > 2000) {
+  if (seenFbCommentIds.size > 2500) {
     const first = seenFbCommentIds.values().next().value;
     if (first) seenFbCommentIds.delete(first);
   }
@@ -806,46 +912,54 @@ function handleFbComment(item: {
       ? `https://graph.facebook.com/${username}/picture?type=normal`
       : '');
 
-  // Nhận diện tặng Sao Facebook (Facebook Stars) trong bình luận hoặc metadata
-  let stars = Number(item.stars) || 0;
-  if (!stars && commentText) {
-    const starMatch =
-      commentText.match(
-        /(?:đã gửi|vừa gửi|gửi tặng|đã tặng|tặng|sent|gifted)\s+(\d{1,7})\s*(?:sao|stars?|⭐)/i,
-      ) || commentText.match(/⭐\s*(\d{1,7})\s*(?:sao|stars?)?/i);
-    if (starMatch?.[1]) stars = parseInt(starMatch[1], 10);
-  }
-
-  if (commentText) {
+  if (commentText || (isLikeAction && parsedGift.coins <= 0)) {
     liveStatus.fb.commentsReceived += 1;
     broadcastWs('chat', {
       userId: username,
       username,
       nickname,
-      comment: commentText,
+      comment: commentText || '❤️',
       avatar,
+      isFollower: true,
       platform: 'facebook',
       timestamp: Date.now(),
     });
-    broadcastWs('status', liveStatus);
   }
 
-  if (stars > 0) {
+  if (isLikeAction) {
+    const likeDelta = Math.max(1, Number(item.likeCount) || 3);
+    liveStatus.fb.totalReactions += likeDelta;
+    liveStatus.totalLikes += likeDelta;
+    broadcastWs('like', {
+      userId: username,
+      username,
+      nickname,
+      avatar,
+      likeCount: likeDelta,
+      totalLikes: liveStatus.totalLikes,
+      platform: 'facebook',
+      timestamp: Date.now(),
+    });
+  }
+
+  if (parsedGift.coins > 0) {
     broadcastWs('gift', {
       userId: username,
       username,
       nickname,
-      giftName: '⭐ Sao Facebook',
+      giftName: parsedGift.giftName,
       giftId: 9901,
-      diamondCount: stars,
+      diamondCount: parsedGift.coins,
       repeatCount: 1,
-      totalCoins: stars,
-      coins: stars,
+      totalCoins: parsedGift.coins,
+      coins: parsedGift.coins,
       avatar,
       platform: 'facebook',
       timestamp: Date.now(),
     });
   }
+
+  broadcastWs('status', liveStatus);
   return true;
 }
 
@@ -1016,7 +1130,7 @@ app.post('/api/facebook/connect', async (req, res) => {
     fbPollTimer = setInterval(async () => {
       tickCount++;
       try {
-        const cUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(cleanVid)}/comments?fields=id,from{id,name,picture.type(normal)},message,created_time&filter=stream&order=reverse_chronological&limit=20&access_token=${encodeURIComponent(token)}`;
+        const cUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(cleanVid)}/comments?fields=id,from{id,name,picture.type(normal)},message,attachment{type,title,description},created_time&filter=stream&order=reverse_chronological&limit=20&access_token=${encodeURIComponent(token)}`;
         const r = await fetch(cUrl);
         const d: any = await r.json();
         if (d?.error) {
@@ -1034,36 +1148,40 @@ app.post('/api/facebook/connect', async (req, res) => {
               nickname: c.from?.name || 'Khán giả FB',
               comment: c.message || '',
               avatar: c.from?.picture?.data?.url || '',
+              attachmentType: c.attachment?.type || '',
+              attachmentTitle:
+                `${c.attachment?.title || ''} ${c.attachment?.description || ''}`.trim(),
             });
           }
         }
 
-        if (tickCount % 3 === 0) {
-          const vUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(cleanVid)}?fields=live_views,reactions.summary(total_count)&access_token=${encodeURIComponent(token)}`;
-          const vr = await fetch(vUrl);
-          const vd: any = await vr.json();
-          if (!vd?.error) {
-            if (typeof vd?.live_views === 'number') {
-              liveStatus.fb.viewerCount = vd.live_views;
-              if (!liveStatus.connected) liveStatus.viewerCount = vd.live_views;
-            }
-            const newReactions = vd?.reactions?.summary?.total_count;
-            if (
-              typeof newReactions === 'number' &&
-              newReactions > liveStatus.fb.totalReactions
-            ) {
-              const delta = newReactions - liveStatus.fb.totalReactions;
-              liveStatus.fb.totalReactions = newReactions;
-              liveStatus.totalLikes += delta;
-              broadcastWs('like', {
-                userId: 'fb_reaction',
-                username: 'fb_reaction',
-                nickname: 'Khán giả Facebook',
-                likeCount: delta,
-                totalLikes: liveStatus.totalLikes,
-                platform: 'facebook',
-              });
-            }
+        const vUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(cleanVid)}?fields=live_views,reactions.summary(total_count)&access_token=${encodeURIComponent(token)}`;
+        const vr = await fetch(vUrl);
+        const vd: any = await vr.json();
+        if (!vd?.error) {
+          if (typeof vd?.live_views === 'number') {
+            liveStatus.fb.viewerCount = vd.live_views;
+            if (!liveStatus.connected) liveStatus.viewerCount = vd.live_views;
+          }
+          const newReactions = vd?.reactions?.summary?.total_count;
+          if (
+            typeof newReactions === 'number' &&
+            newReactions > liveStatus.fb.totalReactions
+          ) {
+            const delta = newReactions - liveStatus.fb.totalReactions;
+            liveStatus.fb.totalReactions = newReactions;
+            liveStatus.totalLikes += delta;
+            broadcastWs('like', {
+              userId: 'fb_reaction',
+              username: 'fb_reaction',
+              nickname: 'Khán giả Facebook',
+              likeCount: delta,
+              totalLikes: liveStatus.totalLikes,
+              platform: 'facebook',
+              timestamp: Date.now(),
+            });
+          }
+          if (tickCount % 2 === 0) {
             broadcastWs('status', liveStatus);
           }
         }
@@ -1120,25 +1238,40 @@ function processFbIngestPayload(body: any) {
     };
   }
   let count = 0;
+  const hasSingleEvent = Boolean(
+    body.comment ||
+      Number(body.stars) > 0 ||
+      Number(body.coins) > 0 ||
+      body.giftName ||
+      body.isLike,
+  );
   const list = Array.isArray(body.comments)
     ? body.comments
-    : body.comment
+    : hasSingleEvent
       ? [body]
       : [];
   for (const item of list) {
     if (handleFbComment(item)) count++;
   }
+  if (Array.isArray(body.gifts)) {
+    for (const g of body.gifts) {
+      if (handleFbComment(g)) count++;
+    }
+  }
   if (typeof body.likes === 'number' && body.likes > 0) {
     const delta = Math.min(500, Math.round(body.likes));
     liveStatus.fb.totalReactions += delta;
     liveStatus.totalLikes += delta;
+    const likeUserId = normalizeFbUserId(body.username, body.nickname);
     broadcastWs('like', {
-      userId: body.username || 'fb_reaction',
-      username: body.username || 'fb_reaction',
+      userId: likeUserId,
+      username: likeUserId,
       nickname: body.nickname || 'Khán giả Facebook',
+      avatar: body.avatar || '',
       likeCount: delta,
       totalLikes: liveStatus.totalLikes,
       platform: 'facebook',
+      timestamp: Date.now(),
     });
     count++;
   }
@@ -1264,8 +1397,12 @@ app.get('/api/facebook/bridge', (_req, res) => {
         total += (j.processed || 1);
         cntEl.textContent = String(total);
         const c = d.payload.comments && d.payload.comments[0];
-        if (c) {
-          lastEl.textContent = '💬 ' + (c.nickname || 'Khán giả') + ': ' + (c.comment || '');
+        if (c && (c.stars || c.coins || c.giftName)) {
+          lastEl.textContent = '⭐ ' + (c.nickname || 'Khán giả') + ' tặng ' + (c.giftName || ((c.stars || c.coins) + ' Sao'));
+        } else if (c) {
+          lastEl.textContent = '💬 ' + (c.nickname || 'Khán giả') + ': ' + (c.comment || '❤️');
+        } else if (d.payload.likes) {
+          lastEl.textContent = '❤️ +' + d.payload.likes + ' lượt thả tim / like Facebook!';
         }
         if (e.source) {
           e.source.postMessage({ type: 'VN_FB_BRIDGE_ACK', total }, '*');

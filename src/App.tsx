@@ -1587,7 +1587,31 @@ export default function App() {
                           onClick={() =>
                             void ingestFbEvent({
                               nickname: 'Hoàng Long FB',
-                              comment: 'Đã gửi 100 sao bứt tốc Rồng Thần!',
+                              likes: 3,
+                            })
+                          }
+                          className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs font-bold text-rose-300 hover:bg-slate-700"
+                        >
+                          ❤️ Thử Thả Tim / Like FB
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void ingestFbEvent({
+                              nickname: 'Hoàng Long FB',
+                              giftName: '🚀 Tên Lửa Facebook',
+                              coins: 25,
+                            })
+                          }
+                          className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs font-bold text-sky-300 hover:bg-slate-700"
+                        >
+                          🎁 Thử Quà FB (Rocket)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void ingestFbEvent({
+                              nickname: 'Hoàng Long FB',
                               stars: 100,
                             })
                           }
@@ -2533,26 +2557,79 @@ function buildFbBrowserBridgeScript(serverOrigin: string): string {
 
   openBridgePopup();
 
+  let lastDomReactions = -1;
+
+  function detectStars(str) {
+    if (!str) return 0;
+    const m = str.match(/(?:đã gửi|vừa gửi|gửi tặng|đã tặng|tặng|ủng hộ|sent|gifted)\\s+(\\d[\\d.,]*)\\s*(?:sao|stars?|⭐)/i)
+      || str.match(/⭐\\s*(\\d[\\d.,]*)\\s*(?:sao|stars?)?/i)
+      || str.match(/\\b(\\d[\\d.,]*)\\s*(?:sao|stars?)\\b/i);
+    if (!m || !m[1]) return 0;
+    const v = parseInt(m[1].replace(/[.,]/g, ''), 10);
+    return v > 0 && v <= 1000000 ? v : 0;
+  }
+
+  function detectGift(str) {
+    if (!str) return { coins: 0, giftName: '' };
+    if (/(?:đã gửi|vừa gửi|đã tặng|gửi tặng)\\s+(?:một\\s+)?(?:phần quà|món quà|quà tặng|quà\\b|vương miện|rồng|tên lửa|hoa hồng)/i.test(str)
+      || /\\b(?:sent a gift|sent a virtual gift|gifted a)\\b/i.test(str)) {
+      if (/rồng|dragon|vương miện|crown|vip/i.test(str)) return { coins: 120, giftName: '🐉 Quà VIP Facebook' };
+      if (/siêu nhân|pháo hoa|kim cương/i.test(str)) return { coins: 60, giftName: '🦸 Siêu Quà Facebook' };
+      return { coins: 25, giftName: '🎁 Quà Facebook Live' };
+    }
+    return { coins: 0, giftName: '' };
+  }
+
   function sendToGame(item) {
+    const hasItem = Boolean(item.comment || item.stars || item.coins || item.giftName || item.isLike);
     const payload = {
       videoId: location.href.slice(0, 120),
       pageName: document.title.replace(/\\(\\d+\\)\\s*/, '').slice(0, 45) || 'Facebook Live',
-      comments: item.comment ? [item] : [],
+      comments: hasItem ? [item] : [],
+      likes: item.likes || 0,
     };
+    const previewTxt = item.coins || item.stars
+      ? '⭐ ' + item.nickname + ' (' + (item.coins || item.stars) + ' Sao)'
+      : item.likes
+        ? '❤️ +' + item.likes + ' Tim/Like'
+        : item.comment ? item.nickname + ': ' + item.comment : '';
     if (isBridgeOpen()) {
       try {
         bridgeWin.postMessage({ type: 'FB_LIVE_INGEST', payload }, '*');
-        updateBadge(item.comment ? item.nickname + ': ' + item.comment : '');
+        updateBadge(previewTxt);
         return;
       } catch {}
     }
-    if (item.comment) queue.push(payload);
+    if (hasItem || item.likes) queue.push(payload);
     updateBadge();
+  }
+
+  function scanReactions(isInitial) {
+    let best = -1;
+    document.querySelectorAll('[aria-label*="cảm xúc"], [aria-label*="lượt thích"], [aria-label*="reaction"], [aria-label*="like"], span[role="toolbar"] ~ span').forEach((el) => {
+      const src = (el.getAttribute('aria-label') || el.textContent || '').trim();
+      const m = src.match(/(\\d+(?:[.,]\\d+)?)\\s*(?:lượt thích|cảm xúc|reactions?|likes?)/i);
+      if (m && m[1]) {
+        const v = parseInt(m[1].replace(/[.,]/g, ''), 10);
+        if (v > best) best = v;
+      } else if (/^\\d{1,7}$/.test(src)) {
+        const v = parseInt(src, 10);
+        if (v > best) best = v;
+      }
+    });
+    if (best >= 0) {
+      if (isInitial || lastDomReactions < 0) lastDomReactions = best;
+      else if (best > lastDomReactions) {
+        const delta = Math.min(50, best - lastDomReactions);
+        lastDomReactions = best;
+        count++;
+        sendToGame({ likes: delta });
+      }
+    }
   }
 
   function parseArticle(el, isInitial) {
     const aria = el.getAttribute('aria-label') || '';
-    if (!aria && !el.querySelector('div[dir="auto"]')) return;
     let nickname = '';
     const linkSpans = el.querySelectorAll('a[role="link"] span[dir="auto"], a span[dir="auto"], span[dir="auto"] a');
     for (const s of linkSpans) {
@@ -2562,14 +2639,29 @@ function buildFbBrowserBridgeScript(serverOrigin: string): string {
         break;
       }
     }
+    if (!nickname) return;
     const textBlocks = [];
-    el.querySelectorAll('div[dir="auto"]').forEach((d) => {
-      if (d.querySelector('div[dir="auto"]')) return;
+    el.querySelectorAll('div[dir="auto"], span[dir="auto"]').forEach((d) => {
+      if (d.querySelector('div[dir="auto"], span[dir="auto"]')) return;
+      if (d.closest('a[role="link"]')) return;
       const t = (d.innerText || d.textContent || '').trim();
-      if (t && t !== nickname) textBlocks.push(t);
+      if (t && t !== nickname && !/^(Thích|Phản hồi|Chia sẻ|Like|Reply|Share|Theo dõi|Follow|\\d+\\s*(phút|giờ|giây|ngày|tuần|m|h|s|d|w))$/i.test(t)) {
+        textBlocks.push(t);
+      }
     });
-    const comment = textBlocks.join(' ').trim();
-    if (!nickname || !comment) return;
+    let emojiAlt = '';
+    let isStickerLike = false;
+    el.querySelectorAll('img[alt], div[role="img"][aria-label]').forEach((imgNode) => {
+      const alt = imgNode.getAttribute('alt') || imgNode.getAttribute('aria-label') || '';
+      if (alt && alt.length <= 16) emojiAlt += alt;
+      else if (/thích|like|trái tim|heart|love|yêu thích/i.test(alt)) isStickerLike = true;
+    });
+    const comment = (textBlocks.join(' ').trim() || emojiAlt).trim();
+    const fullTxt = comment + ' ' + aria + ' ' + (el.innerText || '').replace(/\\s+/g, ' ');
+    const stars = detectStars(fullTxt);
+    const gift = detectGift(fullTxt);
+    const coins = stars || gift.coins;
+    if (!comment && !coins && !isStickerLike) return;
     let avatar = '';
     const svgImg = el.querySelector('svg image');
     if (svgImg) avatar = svgImg.getAttribute('xlink:href') || svgImg.getAttribute('href') || '';
@@ -2577,17 +2669,19 @@ function buildFbBrowserBridgeScript(serverOrigin: string): string {
       const img = el.querySelector('img');
       if (img && img.src && !img.src.includes('emoji')) avatar = img.src;
     }
-    const key = nickname + '|' + comment;
+    const key = nickname + '|' + comment + '|' + coins + '|' + (isStickerLike ? 'L' : '');
     if (seen.has(key)) return;
     seen.add(key);
     if (isInitial) return;
     count++;
-    sendToGame({ id: key + '|' + Date.now(), nickname, comment, avatar });
+    sendToGame({ id: key + '|' + Date.now(), nickname, comment: comment || (isStickerLike ? '❤️' : ''), avatar, stars, coins, giftName: gift.giftName, isLike: isStickerLike });
   }
 
   document.querySelectorAll('div[role="article"]').forEach((el) => parseArticle(el, true));
+  scanReactions(true);
   const timer = setInterval(() => {
     document.querySelectorAll('div[role="article"]').forEach((el) => parseArticle(el, false));
+    scanReactions(false);
   }, 850);
   window.__VN_FB_BRIDGE_STOP = () => clearInterval(timer);
 })();`;
