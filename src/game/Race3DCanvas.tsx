@@ -20,10 +20,16 @@ import {
   buildTriangulatedRibbon,
   buildTriangulatedTerrain,
   create2KAsphaltPBR,
+  create2KCityTarAsphaltPBR,
   create2KGrassPBR,
   createBallisticSparkSystem,
+  createCityBuildingFacadeTextures,
+  createHologramDragonMaterial,
   createJaggedLightningGroup,
   createPhysicalSkyAndRealTimeSystem,
+  createPointLightShadowOrbPair,
+  createStripedAlphaTexture,
+  createVisualStripedOrbs,
 } from './pbrEnvironmentAndVfx';
 
 interface Race3DCanvasProps {
@@ -301,6 +307,18 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         flashRoadLight.position.set(0, 1.85, 0);
         scene.add(flashRoadLight);
 
+        // Cặp Quả Cầu Ánh Sáng Đổ Bóng Hoa Văn Xoay chuẩn https://threejs.org/examples/webgl_shadowmap_pointlight.html
+        const stripedAlphaTex = createStripedAlphaTexture(THREE);
+        const pointLightOrbPair = createPointLightShadowOrbPair(THREE, scene, stripedAlphaTex);
+
+        // Đèn tỏa sáng rực rỡ từ luồng lửa đuôi Tên Lửa Rocket chiếu sáng mặt đường & xung quanh
+        const rocketExhaustLight = new THREE.PointLight(0xff7a18, 0, 30, 1.25);
+        scene.add(rocketExhaustLight);
+
+        // Đèn hào quang Hologram huyền ảo tỏa sáng từ Rồng Thần xuống mặt đất
+        const dragonHoloLight = new THREE.PointLight(0x22d3ee, 0, 28, 1.3);
+        scene.add(dragonHoloLight);
+
         // ---------- Procedural Textures ----------
         const makeAsphaltTexture = () => {
           const cv = document.createElement('canvas');
@@ -492,6 +510,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         // Vật liệu PBR / PBS 2K (2048x2048 Albedo + NormalMap + RoughnessMap) & Hình khối Topology Triangle
         const grassPBR = create2KGrassPBR(THREE, maxAniso, 2048);
         const asphaltPBR = create2KAsphaltPBR(THREE, maxAniso, 2048);
+        const cityTarAsphaltPBR = create2KCityTarAsphaltPBR(THREE, maxAniso, 2048);
+        const buildingFacadeTex = createCityBuildingFacadeTextures(THREE, maxAniso);
 
         const grassMat = new THREE.MeshPhysicalMaterial({
           map: grassPBR.map,
@@ -655,10 +675,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
         const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
         const buildingBodyMat = new THREE.MeshPhysicalMaterial({
-          color: 0x0f172a,
-          roughness: 0.32,
-          metalness: 0.55,
-          clearcoat: 0.65,
+          color: 0xffffff,
+          map: buildingFacadeTex.map,
+          emissive: 0xffffff,
+          emissiveMap: buildingFacadeTex.emissiveMap,
+          emissiveIntensity: 1.95,
+          roughness: 0.24,
+          metalness: 0.45,
+          clearcoat: 0.72,
         });
         const matDarkMetal = new THREE.MeshPhysicalMaterial({
           color: 0x334155,
@@ -764,7 +788,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           return { x: v.x, y: v.y, z: v.z, yaw: podiumGroup.rotation.y };
         };
 
-        // Áp dụng màu đặc trưng của lề đường và cây lá theo từng bản đồ (ánh sáng & bầu trời do Real-Time PBL điều phối)
+        // Áp dụng màu đặc trưng của lề đường và mặt đường nhựa dầu đô thị (khi vào map Thành Phố Về Đêm)
         const applyMapTheme = (th: MapTheme) => {
           if (curbMat.map) curbMat.map.dispose();
           curbMat.map = makeCurbTexture(th.curbColorA, th.curbColorB);
@@ -773,6 +797,16 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           barrierWhite.color.setHex(th.curbColorB);
           leafMatA.color.setHex(th.leafA);
           leafMatB.color.setHex(th.leafB);
+
+          const isCity = th.sceneryType === 'city';
+          const roadSet = isCity ? cityTarAsphaltPBR : asphaltPBR;
+          roadMat.map = roadSet.map;
+          roadMat.normalMap = roadSet.normalMap;
+          roadMat.roughnessMap = roadSet.roughnessMap;
+          roadMat.clearcoat = isCity ? 0.72 : 0.22;
+          roadMat.clearcoatRoughness = isCity ? 0.14 : 0.38;
+          roadMat.envMapIntensity = isCity ? 1.65 : 1.18;
+          roadMat.needsUpdate = true;
         };
 
         const sharedTrackGeos = new Set<any>([
@@ -1326,22 +1360,73 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   bNeonInstA.setMatrixAt(idx, dummy.matrix);
                 }
               });
+              if (enableWorldShadows) {
+                bBodyInst.castShadow = true;
+                bBodyInst.receiveShadow = true;
+              }
               trackRoot.add(bBodyInst, bNeonInstA, bNeonInstB);
             }
 
-            // Cột đèn đường Neon xen kẽ Hồng / Cyan hai bên đại lộ
+            // Cột đèn đường Đô Thị phát sáng thực (Bóng cao áp sáng rực + Chùm sáng Volumetric mềm + Quầng sáng phản chiếu mặt nhựa dầu)
+            const lampConeGeo = new THREE.ConeGeometry(3.8, 6.85, 18, 1, true);
+            const lampPoolGeo = new THREE.CircleGeometry(4.6, 22);
+            lampPoolGeo.rotateX(-Math.PI / 2);
+            const lampConeWarmMat = new THREE.MeshBasicMaterial({
+              color: 0xfef08a,
+              transparent: true,
+              opacity: 0.13,
+              side: THREE.DoubleSide,
+              depthWrite: false,
+              blending: THREE.AdditiveBlending,
+            });
+            const lampConeCyanMat = new THREE.MeshBasicMaterial({
+              color: 0x38bdf8,
+              transparent: true,
+              opacity: 0.12,
+              side: THREE.DoubleSide,
+              depthWrite: false,
+              blending: THREE.AdditiveBlending,
+            });
+            const lampPoolWarmMat = new THREE.MeshBasicMaterial({
+              color: 0xfde047,
+              transparent: true,
+              opacity: 0.22,
+              depthWrite: false,
+              blending: THREE.AdditiveBlending,
+            });
+            const lampBulbWarmMat = new THREE.MeshBasicMaterial({ color: 0xfffbeb });
+
             for (let sl = 0; sl < 26; sl++) {
               const side = sl % 2 === 0 ? -1 : 1;
-              const s = sampleCircuit((sl / 26) * total, side * (halfW + 3.4));
+              const s = sampleCircuit((sl / 26) * total, side * (halfW + 3.2));
               const lg = new THREE.Group();
               const post = new THREE.Mesh(streetPostGeo, matDarkMetal);
               post.position.y = 3.6;
+              if (enableWorldShadows) post.castShadow = true;
               const arm = new THREE.Mesh(streetArmGeo, matDarkMetal);
               arm.position.set(-side * 1.0, 7.1, 0);
-              const lampMat = sl % 3 === 0 ? neonAmberMat : sl % 2 === 0 ? neonCyanMat : neonPinkMat;
-              const lamp = new THREE.Mesh(streetLampGeo, lampMat);
-              lamp.position.set(-side * 1.9, 6.95, 0);
-              lg.add(post, arm, lamp);
+              const isWarm = sl % 4 !== 3;
+              const lamp = new THREE.Mesh(
+                streetLampGeo,
+                isWarm ? lampBulbWarmMat : neonCyanMat,
+              );
+              lamp.position.set(-side * 1.9, 6.92, 0);
+
+              const cone = new THREE.Mesh(
+                lampConeGeo,
+                isWarm ? lampConeWarmMat : lampConeCyanMat,
+              );
+              cone.position.set(-side * 2.15, 3.45, 0);
+
+              const poolMesh = new THREE.Mesh(lampPoolGeo, lampPoolWarmMat);
+              poolMesh.position.set(-side * 2.35, 0.055, 0);
+
+              lg.add(post, arm, lamp, cone, poolMesh);
+              if (sl % 4 === 0) {
+                const pt = new THREE.PointLight(isWarm ? 0xfde68a : 0x38bdf8, 4.2, 26, 1.6);
+                pt.position.set(-side * 2.1, 6.6, 0);
+                lg.add(pt);
+              }
               lg.position.set(s.x, 0, s.z);
               lg.rotation.y = s.yaw;
               trackRoot.add(lg);
@@ -1671,19 +1756,30 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const geoRocketNozzle = new THREE.CylinderGeometry(0.42, 0.56, 0.48, 12);
         const geoShockRing = new THREE.TorusGeometry(0.95, 0.08, 8, 22);
 
-        // Hình khối Rồng liền khối mượt mà (Rồng Trung Quốc & Rồng Châu Âu)
-        const geoDragonHead = new THREE.SphereGeometry(0.74, 14, 12);
-        const geoDragonSnout = new THREE.CapsuleGeometry(0.32, 0.58, 6, 10);
+        // Hình khối Rồng Chân Thật Điêu Khắc Chi Tiết (Đầu sừng kép, hàm răng nanh, bờm cổ, 22 đốt sống, 4 chân móng vuốt, cánh xương 3 ngón)
+        const geoDragonHead = new THREE.SphereGeometry(0.74, 18, 14);
+        const geoDragonSnout = new THREE.CapsuleGeometry(0.3, 0.64, 8, 12);
         geoDragonSnout.rotateX(Math.PI / 2);
+        const geoDragonBrow = new THREE.CapsuleGeometry(0.1, 0.42, 5, 8);
+        geoDragonBrow.rotateX(Math.PI / 2);
+        const geoDragonFang = new THREE.ConeGeometry(0.048, 0.22, 6);
         const geoDragonHorn = new THREE.ConeGeometry(0.13, 1.05, 8);
-        const geoDragonWhisker = new THREE.CylinderGeometry(0.035, 0.015, 1.65, 6);
-        const geoDragonEye = new THREE.SphereGeometry(0.14, 10, 10);
-        const geoDragonSeg = new THREE.SphereGeometry(0.68, 14, 12);
-        const geoDragonSpike = new THREE.ConeGeometry(0.13, 0.56, 6);
-        const geoDragonWingArm = new THREE.CylinderGeometry(0.11, 0.16, 3.2, 8);
+        const geoDragonHornTip = new THREE.ConeGeometry(0.085, 0.86, 8);
+        const geoDragonMane = new THREE.ConeGeometry(0.095, 0.68, 6);
+        const geoDragonWhisker = new THREE.CylinderGeometry(0.032, 0.012, 1.85, 6);
+        const geoDragonEye = new THREE.SphereGeometry(0.13, 10, 10);
+        const geoDragonSeg = new THREE.SphereGeometry(0.68, 16, 12);
+        const geoDragonSpike = new THREE.ConeGeometry(0.12, 0.58, 6);
+        const geoDragonTailFan = new THREE.ConeGeometry(0.44, 1.35, 5);
+        geoDragonTailFan.rotateX(-Math.PI / 2);
+        const geoDragonThigh = new THREE.CapsuleGeometry(0.21, 0.54, 6, 8);
+        const geoDragonShin = new THREE.CapsuleGeometry(0.14, 0.48, 6, 8);
+        const geoDragonClaw = new THREE.ConeGeometry(0.052, 0.26, 6);
+        const geoDragonWingArm = new THREE.CylinderGeometry(0.1, 0.15, 3.25, 8);
         geoDragonWingArm.rotateZ(Math.PI / 2);
-        const geoDragonWingMain = new THREE.BoxGeometry(2.85, 0.08, 1.55);
-        const geoDragonWingTip = new THREE.ConeGeometry(0.95, 2.25, 4);
+        const geoDragonWingFinger = new THREE.CylinderGeometry(0.032, 0.068, 2.95, 6);
+        const geoDragonWingMain = new THREE.BoxGeometry(2.95, 0.05, 1.65);
+        const geoDragonWingTip = new THREE.ConeGeometry(1.02, 2.35, 4);
         geoDragonWingTip.rotateZ(-Math.PI / 2);
         const geoDragonOrb = new THREE.SphereGeometry(0.24, 12, 10);
         const geoBoltMain = new THREE.BoxGeometry(0.08, 0.08, 1.35);
@@ -1718,15 +1814,39 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           ior: 1.52,
         });
         const matFlameOuter = new THREE.MeshBasicMaterial({
-          color: 0xf97316,
+          color: 0xff6b1a,
           transparent: true,
-          opacity: 0.88,
+          opacity: 0.86,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
         });
-        const matFlameInner = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+        const matFlameInner = new THREE.MeshBasicMaterial({
+          color: 0xfef08a,
+          transparent: true,
+          opacity: 0.94,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const matRocketCore = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.98,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
         const matFlameCyan = new THREE.MeshBasicMaterial({
           color: 0x38bdf8,
           transparent: true,
           opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const matRocketShock = new THREE.MeshBasicMaterial({
+          color: 0xfdba74,
+          transparent: true,
+          opacity: 0.82,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
         });
         const matDragonGold = new THREE.MeshPhysicalMaterial({
           color: 0xfacc15,
@@ -1739,35 +1859,17 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           iridescence: 0.38,
           iridescenceIOR: 1.4,
         });
-        const matDragonCrimson = new THREE.MeshPhysicalMaterial({
-          color: 0xdc2626,
-          emissive: 0x991b1b,
-          emissiveIntensity: 0.32,
-          metalness: 0.62,
-          roughness: 0.2,
-          clearcoat: 0.9,
-          iridescence: 0.3,
-        });
-        const matDragonRoyalBlue = new THREE.MeshPhysicalMaterial({
-          color: 0x1d4ed8,
-          emissive: 0x1e3a8a,
-          emissiveIntensity: 0.36,
-          metalness: 0.78,
-          roughness: 0.18,
-          clearcoat: 0.95,
-          iridescence: 0.42,
-        });
-        const matDragonWingMembrane = new THREE.MeshStandardMaterial({
-          color: 0xf97316,
-          emissive: 0xc2410c,
-          emissiveIntensity: 0.55,
-          metalness: 0.3,
-          roughness: 0.35,
+        // Vật liệu Rồng Hologram Ảo Diệu (GLSL Fresnel + Scanline + Sóng Năng Lượng Xuyên Thấu)
+        const matDragonHoloEast = createHologramDragonMaterial(THREE, 'eastern');
+        const matDragonHoloWest = createHologramDragonMaterial(THREE, 'western');
+        const matDragonFang = new THREE.MeshBasicMaterial({
+          color: 0xe0f2fe,
           transparent: true,
-          opacity: 0.9,
-          side: THREE.DoubleSide,
+          opacity: 0.92,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
         });
-        const matDragonEye = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
+        const matDragonEye = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const matSprintRing = new THREE.MeshBasicMaterial({
           color: 0x22d3ee,
           transparent: true,
@@ -1814,15 +1916,21 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           jetpackGrp: any;
           jetFlames: any[];
           rocketGrp: any;
+          rocketFlameCore: any;
           rocketFlameOuter: any;
           rocketFlameInner: any;
           rocketRing: any;
+          rocketShockRings: any[];
           dragonGrp: any;
           dragonHeadGrp: any;
+          dragonJawGrp: any;
           dragonSegs: any[];
+          dragonLegs: any[];
           dragonLeftWing: any;
           dragonRightWing: any;
           dragonOrbsGrp: any;
+          dragonHoloMeshes: any[];
+          visualOrbs: ReturnType<typeof createVisualStripedOrbs>;
           flashLightningGrp: any;
           jaggedLightning: ReturnType<typeof createJaggedLightningGroup>;
         }
@@ -1901,12 +2009,15 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const leftLeg = makeLimb(-0.27, 0.94, pantsMat);
           const rightLeg = makeLimb(0.27, 0.94, pantsMat);
 
-          // 1) Sprint Aura Ring
+          // 1) Sprint Aura Ring + Cặp Quả Cầu Sọc Ánh Sáng Xoay Quanh Nhân Vật (webgl_shadowmap_pointlight)
           const sprintRing = new THREE.Mesh(geoShockRing, matSprintRing);
           sprintRing.rotation.x = Math.PI / 2;
           sprintRing.position.y = 0.22;
           sprintRing.visible = false;
           root.add(sprintRing);
+
+          const visualOrbs = createVisualStripedOrbs(THREE, stripedAlphaTex);
+          root.add(visualOrbs.grp);
 
           // 2) Jetpack 3D
           const jetpackGrp = new THREE.Group();
@@ -1930,7 +2041,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           jetpackGrp.visible = false;
           bodyPivot.add(jetpackGrp);
 
-          // 3) Tên Lửa 3D
+          // 3) Tên Lửa Siêu Thanh 3D + Luồng Lửa Afterburner 3 Lớp & Vòng Sóng Xung Kích Kim Cương (Shock Diamonds)
           const rocketGrp = new THREE.Group();
           rocketGrp.position.set(0, 0.45, 0.25);
           const rBody = new THREE.Mesh(geoRocketBody, matChrome);
@@ -1954,117 +2065,220 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             finWrap.add(fin);
             rocketGrp.add(finWrap);
           }
-          const rocketFlameOuter = new THREE.Mesh(geoFlameOuter, matFlameOuter);
-          rocketFlameOuter.rotation.x = -Math.PI / 2;
-          rocketFlameOuter.scale.set(2.3, 2.9, 2.3);
-          rocketFlameOuter.position.z = -3.35;
+          const rocketFlameCore = new THREE.Mesh(geoFlameInner, matRocketCore);
+          rocketFlameCore.rotation.x = -Math.PI / 2;
+          rocketFlameCore.scale.set(1.55, 2.25, 1.55);
+          rocketFlameCore.position.z = -2.45;
+
           const rocketFlameInner = new THREE.Mesh(geoFlameInner, matFlameInner);
           rocketFlameInner.rotation.x = -Math.PI / 2;
-          rocketFlameInner.scale.set(2.1, 2.6, 2.1);
-          rocketFlameInner.position.z = -2.8;
+          rocketFlameInner.scale.set(2.35, 3.35, 2.35);
+          rocketFlameInner.position.z = -3.05;
+
+          const rocketFlameOuter = new THREE.Mesh(geoFlameOuter, matFlameOuter);
+          rocketFlameOuter.rotation.x = -Math.PI / 2;
+          rocketFlameOuter.scale.set(2.75, 4.15, 2.75);
+          rocketFlameOuter.position.z = -3.85;
+
           const rocketRing = new THREE.Mesh(geoShockRing, matFlameCyan);
-          rocketRing.position.z = -2.1;
+          rocketRing.position.z = -2.08;
+
+          const rocketShockRings: any[] = [];
+          for (let sr = 0; sr < 3; sr++) {
+            const sRing = new THREE.Mesh(geoShockRing, matRocketShock);
+            sRing.position.z = -2.4 - sr * 0.95;
+            sRing.scale.setScalar(0.68 - sr * 0.14);
+            rocketGrp.add(sRing);
+            rocketShockRings.push(sRing);
+          }
+
           rocketGrp.add(
             rBody,
             rStripe,
             rNose,
             rWin,
             rNozzle,
-            rocketFlameOuter,
+            rocketFlameCore,
             rocketFlameInner,
+            rocketFlameOuter,
             rocketRing,
           );
           rocketGrp.visible = false;
           root.add(rocketGrp);
 
-          // 4) Rồng Thần Liền Khối Mượt Mà (Ngẫu nhiên Rồng Trung Quốc Hoàng Kim hoặc Rồng Châu Âu Hoàng Gia Cánh Lớn)
+          // 4) Rồng Thần Hologram Ảo Diệu & Giải Phẫu Điêu Khắc Chân Thật (Đầu Sừng Kép + Hàm Nanh + Bờm + 22 Đốt Thân + 4 Chân Móng Vuốt + Cánh 3 Ngón)
+          const dragonHoloMeshes: any[] = [];
+          const addHoloMesh = (geo: any, parent: any) => {
+            const m = new THREE.Mesh(geo, matDragonHoloEast);
+            parent.add(m);
+            dragonHoloMeshes.push(m);
+            return m;
+          };
+
           const dragonGrp = new THREE.Group();
           dragonGrp.position.set(0, 0.4, 0);
           const dragonHeadGrp = new THREE.Group();
-          dragonHeadGrp.position.set(0, 0.95, 2.85);
-          const dHead = new THREE.Mesh(geoDragonHead, matDragonGold);
-          dHead.scale.set(0.95, 0.85, 1.25);
-          const dSnout = new THREE.Mesh(geoDragonSnout, matDragonGold);
-          dSnout.position.set(0, -0.08, 0.85);
-          const dJaw = new THREE.Mesh(geoDragonSnout, matDragonCrimson);
-          dJaw.position.set(0, -0.36, 0.72);
-          dJaw.scale.set(0.82, 0.65, 0.88);
-          dJaw.rotation.x = 0.2;
+          dragonHeadGrp.position.set(0, 1.02, 3.05);
+
+          // Hộp sọ & mõm trên góc cạnh uy nghiêm
+          const dHead = addHoloMesh(geoDragonHead, dragonHeadGrp);
+          dHead.scale.set(0.92, 0.84, 1.32);
+          const dSnout = addHoloMesh(geoDragonSnout, dragonHeadGrp);
+          dSnout.position.set(0, -0.04, 0.92);
+          dSnout.scale.set(0.96, 0.82, 1.12);
+
+          // Cặp gờ chân mày dữ dội che trên hốc mắt rồng
+          for (const sx of [-1, 1]) {
+            const brow = addHoloMesh(geoDragonBrow, dragonHeadGrp);
+            brow.position.set(sx * 0.36, 0.28, 0.56);
+            brow.rotation.set(0.18, sx * 0.28, sx * -0.35);
+          }
+
+          // Hàm dưới cử động há gầm + 4 răng nanh sắc nhọn phát sáng
+          const dragonJawGrp = new THREE.Group();
+          dragonJawGrp.position.set(0, -0.24, 0.24);
+          const dJaw = addHoloMesh(geoDragonSnout, dragonJawGrp);
+          dJaw.position.set(0, -0.08, 0.56);
+          dJaw.scale.set(0.8, 0.58, 0.94);
+          for (const fx of [-0.22, 0.22]) {
+            const fangFront = new THREE.Mesh(geoDragonFang, matDragonFang);
+            fangFront.position.set(fx, 0.14, 0.92);
+            const fangMid = new THREE.Mesh(geoDragonFang, matDragonFang);
+            fangMid.position.set(fx * 1.12, 0.12, 0.58);
+            fangMid.scale.setScalar(0.82);
+            dragonJawGrp.add(fangFront, fangMid);
+          }
+          dragonHeadGrp.add(dragonJawGrp);
+
+          // Đôi mắt rồng phát tia sáng trắng ngọc
           const dEyeL = new THREE.Mesh(geoDragonEye, matDragonEye);
-          dEyeL.position.set(-0.42, 0.18, 0.52);
+          dEyeL.position.set(-0.41, 0.16, 0.56);
+          dEyeL.scale.set(0.85, 0.65, 1.25);
           const dEyeR = new THREE.Mesh(geoDragonEye, matDragonEye);
-          dEyeR.position.set(0.42, 0.18, 0.52);
-          const dHornL = new THREE.Mesh(geoDragonHorn, matDragonGold);
-          dHornL.position.set(-0.34, 0.68, -0.25);
-          dHornL.rotation.set(-0.65, 0, 0.28);
-          const dHornR = new THREE.Mesh(geoDragonHorn, matDragonGold);
-          dHornR.position.set(0.34, 0.68, -0.25);
-          dHornR.rotation.set(-0.65, 0, -0.28);
-          // Râu rồng dài đặc trưng của Rồng Trung Quốc (chỉ hiện khi là Rồng Trung Quốc)
+          dEyeR.position.set(0.41, 0.16, 0.56);
+          dEyeR.scale.set(0.85, 0.65, 1.25);
+          dragonHeadGrp.add(dEyeL, dEyeR);
+
+          // Cặp sừng rồng 2 đốt uốn cong vút ra sau cực kỳ chân thật + sừng phụ bên má
+          for (const sx of [-1, 1]) {
+            const hornBase = addHoloMesh(geoDragonHorn, dragonHeadGrp);
+            hornBase.position.set(sx * 0.36, 0.62, -0.22);
+            hornBase.rotation.set(-0.78, 0, sx * 0.32);
+            const hornTip = addHoloMesh(geoDragonHornTip, dragonHeadGrp);
+            hornTip.position.set(sx * 0.54, 1.06, -0.82);
+            hornTip.rotation.set(-1.12, 0, sx * 0.42);
+            const cheekSpike = addHoloMesh(geoDragonMane, dragonHeadGrp);
+            cheekSpike.position.set(sx * 0.58, -0.05, -0.18);
+            cheekSpike.rotation.set(-0.95, 0, sx * 0.78);
+            cheekSpike.scale.setScalar(0.72);
+          }
+
+          // Bờm gai dọc đỉnh gáy rồng
+          for (let m = 0; m < 3; m++) {
+            const mane = addHoloMesh(geoDragonMane, dragonHeadGrp);
+            mane.position.set(0, 0.58 - m * 0.12, -0.35 - m * 0.32);
+            mane.rotation.x = -0.72 - m * 0.12;
+          }
+
+          // Râu rồng uốn lượn đặc trưng của Rồng Phương Đông
           const dragonWhiskersGrp = new THREE.Group();
-          const whiskL = new THREE.Mesh(geoDragonWhisker, matDragonGold);
-          whiskL.position.set(-0.68, -0.15, 0.75);
-          whiskL.rotation.set(0.35, 0, 1.15);
-          const whiskR = new THREE.Mesh(geoDragonWhisker, matDragonGold);
-          whiskR.position.set(0.68, -0.15, 0.75);
-          whiskR.rotation.set(0.35, 0, -1.15);
-          dragonWhiskersGrp.add(whiskL, whiskR);
-          dragonHeadGrp.add(dHead, dSnout, dJaw, dEyeL, dEyeR, dHornL, dHornR, dragonWhiskersGrp);
+          for (const sx of [-1, 1]) {
+            const whisk = addHoloMesh(geoDragonWhisker, dragonWhiskersGrp);
+            whisk.position.set(sx * 0.68, -0.12, 0.92);
+            whisk.rotation.set(0.42, sx * -0.25, sx * 1.18);
+          }
+          dragonHeadGrp.add(dragonWhiskersGrp);
           dragonGrp.add(dragonHeadGrp);
 
-          // Thân rồng liền khối gồm 16 đốt cầu thuôn gối lên nhau sát khít tạo đường cong liền mạch 100%
+          // Thân & Đuôi rồng gồm 22 đốt sống cơ bắp thuôn mượt tới vây đuôi năng lượng
+          const DRAGON_SEG_COUNT = 22;
           const dragonSegs: any[] = [];
-          for (let s = 0; s < 16; s++) {
+          for (let s = 0; s < DRAGON_SEG_COUNT; s++) {
             const sg = new THREE.Group();
-            const tFrac = s / 15;
-            // Độ dày cơ thể thuôn mượt từ ngực/vai đầy đặn tới chóp đuôi thanh thoát
+            const tFrac = s / (DRAGON_SEG_COUNT - 1);
+            // Cổ săn chắc -> Ngực nở cơ bắp (đốt 2..5) -> Thân thon dài -> Đuôi vút mảnh
             const thickness =
-              s < 3
-                ? 0.92 + s * 0.08
-                : Math.max(0.28, 1.12 * Math.pow(1 - (tFrac - 0.15) * 0.82, 1.1));
-            const segMesh = new THREE.Mesh(
-              geoDragonSeg,
-              s % 3 === 1 ? matDragonCrimson : matDragonGold,
-            );
-            segMesh.scale.set(thickness * 0.95, thickness * 0.88, thickness * 1.48);
-            sg.add(segMesh);
-            if (s % 2 === 0 && s < 14) {
-              const spike = new THREE.Mesh(geoDragonSpike, matDragonGold);
-              spike.position.y = 0.68 * thickness;
-              spike.rotation.x = -0.35;
-              spike.scale.setScalar(thickness * 0.85);
-              sg.add(spike);
+              s < 4
+                ? 0.86 + Math.sin((s / 4) * Math.PI * 0.75) * 0.32
+                : Math.max(0.2, 1.18 * Math.pow(1 - (tFrac - 0.12) * 0.88, 1.25));
+            const segMesh = addHoloMesh(geoDragonSeg, sg);
+            segMesh.scale.set(thickness * 0.92, thickness * 0.86, thickness * 1.46);
+
+            if (s < DRAGON_SEG_COUNT - 2) {
+              const spike = addHoloMesh(geoDragonSpike, sg);
+              spike.position.y = 0.66 * thickness;
+              spike.rotation.x = -0.45;
+              spike.scale.setScalar(thickness * (s % 2 === 0 ? 0.95 : 0.68));
+            } else if (s === DRAGON_SEG_COUNT - 1) {
+              // Chóp đuôi xòe quạt vây năng lượng 3 cánh dũng mãnh
+              for (const fanAng of [-0.38, 0, 0.38]) {
+                const fan = addHoloMesh(geoDragonTailFan, sg);
+                fan.position.set(Math.sin(fanAng) * 0.22, 0.04, -0.55);
+                fan.rotation.y = fanAng;
+                fan.scale.set(0.75, 0.22, 1.0);
+              }
             }
-            sg.position.set(0, 0.35, 2.25 - s * 0.44);
+            sg.position.set(0, 0.38, 2.45 - s * 0.38);
             dragonGrp.add(sg);
             dragonSegs.push(sg);
           }
 
-          // Đôi cánh Rồng Châu Âu uy nghi (xương cánh hoàng kim + màng cánh đỏ cam phát sáng)
+          // 4 Chân Rồng Cơ Bắp Có Móng Vuốt Sắc Bén (2 chân trước + 2 chân sau đạp mây)
+          const dragonLegs: any[] = [];
+          const legConfigs: Array<{ side: -1 | 1; zOff: number; isFront: boolean }> = [
+            { side: -1, zOff: 1.25, isFront: true },
+            { side: 1, zOff: 1.25, isFront: true },
+            { side: -1, zOff: -1.45, isFront: false },
+            { side: 1, zOff: -1.45, isFront: false },
+          ];
+          for (const lc of legConfigs) {
+            const hipPivot = new THREE.Group();
+            hipPivot.position.set(lc.side * 0.72, 0.22, lc.zOff);
+            const thigh = addHoloMesh(geoDragonThigh, hipPivot);
+            thigh.position.set(lc.side * 0.16, -0.32, -0.08);
+            thigh.rotation.set(0.42, 0, lc.side * 0.35);
+            const shin = addHoloMesh(geoDragonShin, hipPivot);
+            shin.position.set(lc.side * 0.28, -0.78, 0.12);
+            shin.rotation.set(-0.55, 0, lc.side * 0.12);
+            for (let cl = -1; cl <= 1; cl++) {
+              const claw = new THREE.Mesh(geoDragonClaw, matDragonFang);
+              claw.position.set(lc.side * 0.3 + cl * 0.09, -1.04, 0.34);
+              claw.rotation.x = Math.PI * 0.62;
+              hipPivot.add(claw);
+            }
+            dragonGrp.add(hipPivot);
+            dragonLegs.push(hipPivot);
+          }
+
+          // Đôi cánh Rồng Hologram Xương 3 Ngón xòe rộng uy nghi
           const makeDragonWing = (side: -1 | 1) => {
             const pivot = new THREE.Group();
-            pivot.position.set(side * 0.52, 0.72, 0.95);
-            const arm = new THREE.Mesh(geoDragonWingArm, matDragonGold);
-            arm.position.set(side * 1.55, 0.14, 0.25);
-            const mainW = new THREE.Mesh(geoDragonWingMain, matDragonWingMembrane);
-            mainW.position.set(side * 1.45, 0, -0.25);
-            const tipW = new THREE.Mesh(geoDragonWingTip, matDragonWingMembrane);
-            tipW.position.set(side * 3.45, 0.08, -0.35);
+            pivot.position.set(side * 0.56, 0.78, 1.15);
+            const arm = addHoloMesh(geoDragonWingArm, pivot);
+            arm.position.set(side * 1.58, 0.18, 0.28);
+            for (let fg = 0; fg < 3; fg++) {
+              const finger = addHoloMesh(geoDragonWingFinger, pivot);
+              finger.position.set(side * (2.05 + fg * 0.55), 0.08 - fg * 0.05, -0.45 - fg * 0.25);
+              finger.rotation.set(0.55 + fg * 0.22, 0, side * (1.15 - fg * 0.18));
+            }
+            const mainW = addHoloMesh(geoDragonWingMain, pivot);
+            mainW.position.set(side * 1.52, 0.02, -0.28);
+            const tipW = addHoloMesh(geoDragonWingTip, pivot);
+            tipW.position.set(side * 3.55, 0.08, -0.38);
             tipW.rotation.y = side * -0.22;
             if (side === -1) tipW.scale.x = -1;
-            pivot.add(arm, mainW, tipW);
             dragonGrp.add(pivot);
             return pivot;
           };
           const dragonLeftWing = makeDragonWing(-1);
           const dragonRightWing = makeDragonWing(1);
+
           const dragonOrbsGrp = new THREE.Group();
           dragonOrbsGrp.position.set(0, 1.25, 0.4);
           for (let o = 0; o < 4; o++) {
             const ang = (o * Math.PI) / 2;
-            const orb = new THREE.Mesh(geoDragonOrb, matDragonGold);
-            orb.position.set(Math.cos(ang) * 2.25, 0, Math.sin(ang) * 2.25);
-            dragonOrbsGrp.add(orb);
+            const orb = addHoloMesh(geoDragonOrb, dragonOrbsGrp);
+            orb.position.set(Math.cos(ang) * 2.35, 0, Math.sin(ang) * 2.35);
           }
           dragonGrp.add(dragonOrbsGrp);
           dragonGrp.visible = false;
@@ -2115,12 +2329,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           landingShockRing.visible = false;
           root.add(landingShockRing);
 
-          // 2 lớp vật liệu Hào Quang bám theo đúng hình hài nhân vật (Lớp viền sắc nét + Lớp vầng sáng mềm bên ngoài)
+          // Vật liệu dự phòng (luôn ẩn để nhân vật giữ nguyên màu gốc 100% khi tăng tốc)
           const glbOutlineMat = new THREE.MeshBasicMaterial({
             color: 0x38bdf8,
             side: THREE.BackSide,
             transparent: true,
-            opacity: 0.88,
+            opacity: 0,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
@@ -2128,17 +2342,24 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             color: 0xfacc15,
             side: THREE.BackSide,
             transparent: true,
-            opacity: 0.34,
+            opacity: 0,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
           });
 
           root.visible = false;
-          // Bật đổ bóng thật cho nhân vật dự phòng & đạo cụ (Jetpack, Tên Lửa, Rồng Thần)
-          [fallbackGrp, jetpackGrp, rocketGrp, dragonGrp].forEach((grp) => {
+          // Bật đổ bóng thật & nhận bóng sáng sọc PointLight cho nhân vật dự phòng & đạo cụ cơ khí
+          [fallbackGrp, jetpackGrp].forEach((grp) => {
             grp.traverse((ch: any) => {
-              if (ch.isMesh) ch.castShadow = true;
+              if (ch.isMesh) {
+                ch.castShadow = true;
+                ch.receiveShadow = true;
+              }
             });
+          });
+          [rBody, rStripe, rNose, rWin, rNozzle].forEach((m) => {
+            m.castShadow = true;
+            m.receiveShadow = true;
           });
           scene.add(root);
 
@@ -2182,15 +2403,21 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             jetpackGrp,
             jetFlames,
             rocketGrp,
+            rocketFlameCore,
             rocketFlameOuter,
             rocketFlameInner,
             rocketRing,
+            rocketShockRings,
             dragonGrp,
             dragonHeadGrp,
+            dragonJawGrp,
             dragonSegs,
+            dragonLegs,
             dragonLeftWing,
             dragonRightWing,
             dragonOrbsGrp,
+            dragonHoloMeshes,
+            visualOrbs,
             flashLightningGrp,
             jaggedLightning,
           };
@@ -2298,6 +2525,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             cloned.traverse((child: any) => {
               if (child.isMesh && child.material) {
                 child.castShadow = true;
+                child.receiveShadow = true;
                 const nameLower = `${child.name || ''}`.toLowerCase();
                 const mb = new THREE.Box3().setFromObject(child);
                 const yCenter = (mb.min.y + mb.max.y) * 0.5;
@@ -2626,6 +2854,20 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             sSlot.rightArm.rotation.x = -2.45 - Math.sin(tSec * 9.5 + sp) * 0.42;
           }
 
+          // Cập nhật thời gian cho Shader Rồng Hologram & xác định tay đua tâm điểm
+          matDragonHoloEast.uniforms.uTime.value = tSec;
+          matDragonHoloWest.uniforms.uTime.value = tSec;
+          const preSpotUserId = cameraDirectorRef.current.getHudState().spotlightUserId;
+          const primaryFocusId = preSpotUserId || allRacers[0]?.id || '';
+          let bestRocketTarget: { x: number; y: number; z: number; isPrimary: boolean } | null = null;
+          let bestDragonTarget: {
+            x: number;
+            y: number;
+            z: number;
+            isEastern: boolean;
+            isPrimary: boolean;
+          } | null = null;
+
           // Cập nhật 60 nhân vật trên đường đua uốn lượn
           for (let i = 0; i < pool.length; i++) {
             const slot = pool[i];
@@ -2676,6 +2918,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.jetpackGrp.visible = false;
               slot.rocketGrp.visible = false;
               slot.dragonGrp.visible = false;
+              slot.visualOrbs.grp.visible = false;
               slot.flashLightningGrp.visible = false;
               slot.supermanAuraGrp.visible = false;
               slot.landingShockRing.visible = false;
@@ -2724,7 +2967,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
             if (isDragon) {
               const hover = 1.65 + Math.sin(tSec * 7 + i) * 0.25;
-              slot.bodyPivot.position.set(0, hover + 0.52, 0.15);
+              slot.bodyPivot.position.set(0, hover + 0.56, 0.25);
               slot.bodyPivot.rotation.set(0.2, 0, bankAngle);
               slot.dragonGrp.position.y = hover - 0.15;
               slot.shadowMesh.scale.setScalar(1.6);
@@ -2747,7 +2990,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 slot.bodyPivot.rotation.set(0.46 * crouchFrac, 0, 0);
                 if (!slot.landingBurstDone) {
                   slot.landingBurstDone = true;
-                  // Nổ vòng tia năng lượng tỏa tròn xung quanh chân khi tiếp đất
                   for (let k = 0; k < 20; k++) {
                     const ang = (k / 20) * Math.PI * 2;
                     spawnParticle({
@@ -2779,8 +3021,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.bodyPivot.rotation.set(0.28, 0, bankAngle);
               slot.shadowMesh.scale.setScalar(0.85);
             } else if (phase === 'lobby') {
-              // Trong thời gian chờ (> 5s): nhân vật khởi động chân tay ngẫu nhiên tự nhiên;
-              // Còn <= 5s cuối: toàn bộ nhân vật cúi người vào thế chuẩn bị xuất phát!
               const isStartReady = timerRef.current <= 5;
               if (isStartReady) {
                 const tense = Math.sin(tSec * 16 + i * 1.9) * 0.02;
@@ -2789,19 +3029,15 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               } else {
                 const warmSlot = Math.floor(tSec / 2.8 + i * 0.7) % 4;
                 if (warmSlot === 1) {
-                  // Nhảy bật khởi động tại chỗ
                   slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 6.5 + i)) * 0.42, 0);
                   slot.bodyPivot.rotation.set(0.06, 0, 0);
                 } else if (warmSlot === 0) {
-                  // Chạy bước nhỏ làm nóng tại chỗ
                   slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 11 + i)) * 0.14, 0);
                   slot.bodyPivot.rotation.set(0.14, Math.sin(tSec * 2 + i) * 0.1, 0);
                 } else if (warmSlot === 2) {
-                  // Vung tay nhún nhảy khởi động
                   slot.bodyPivot.position.set(0, Math.abs(Math.sin(tSec * 4.5 + i)) * 0.12, 0);
                   slot.bodyPivot.rotation.set(0, Math.sin(tSec * 3 + i) * 0.18, 0);
                 } else {
-                  // Thở sâu, xoay vai quan sát đối thủ
                   slot.bodyPivot.position.set(0, 0, 0);
                   slot.bodyPivot.rotation.set(0, Math.sin(tSec * 1.4 + i) * 0.25, 0);
                 }
@@ -2814,72 +3050,41 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.shadowMesh.scale.setScalar(1.0);
             }
 
-            // Bật 2 lớp hào quang phát sáng nổi bật bám theo đúng hình hài nhân vật (khi bay/hạ cánh Siêu Nhân HOẶC khi đang được Camera Spotlight)
-            const activeSpotUserId = cameraDirectorRef.current.getHudState().spotlightUserId;
-            const isHeroSpotlight = Boolean(activeSpotUserId && activeSpotUserId === r.id);
-            const showEnergyRim = isSuperman || isLanding || isHeroSpotlight;
+            // GIỮ NGUYÊN MÀU GỐC NHÂN VẬT 100% khi tăng tốc / spotlight (KHÔNG đổi màu vật liệu hay phủ vỏ màu):
+            // Nhân vật được chiếu sáng tự nhiên bởi cặp Quả Cầu Ánh Sáng Sọc Xoay (webgl_shadowmap_pointlight.html)!
             const outlineMeshes: any[] | undefined = slot.glbHolder.userData.outlineMeshes;
-            // Chuyển sắc hào quang đa màu rực rỡ, sang trọng (Cyan -> Vàng Kim -> Hồng Tím)
-            const phaseColorIdx = Math.floor(tSec * 2.4 + i) % 3;
-            const auraPrimary =
-              isDragon
-                ? 0xfde047
-                : isRocket
-                  ? 0xfb7185
-                  : phaseColorIdx === 0
-                    ? 0x22d3ee
-                    : phaseColorIdx === 1
-                      ? 0xfacc15
-                      : 0xe879f9;
-            const auraSecondary =
-              isDragon
-                ? 0xf97316
-                : phaseColorIdx === 0
-                  ? 0xfacc15
-                  : phaseColorIdx === 1
-                    ? 0x38bdf8
-                    : 0xf472b6;
             if (outlineMeshes) {
-              slot.glbOutlineMat.color.setHex(auraPrimary);
-              slot.glbHaloMat.color.setHex(auraSecondary);
-              slot.glbOutlineMat.opacity = isSuperman
-                ? 0.85 + Math.sin(tSec * 12 + i) * 0.12
-                : isLanding
-                  ? Math.min(0.9, slot.supermanLandTimer * 1.4)
-                  : 0.72 + Math.sin(tSec * 6 + i) * 0.16;
-              slot.glbHaloMat.opacity = isSuperman ? 0.38 : 0.28;
               for (let omIdx = 0; omIdx < outlineMeshes.length; omIdx++) {
-                outlineMeshes[omIdx].visible = showEnergyRim;
+                outlineMeshes[omIdx].visible = false;
               }
             }
             for (let gm = 0; gm < slot.glbAllMats.length; gm++) {
               const mat = slot.glbAllMats[gm];
-              if (mat.emissive) {
-                if (showEnergyRim) {
-                  mat.emissive.setHex(auraPrimary);
-                  mat.emissiveIntensity = isSuperman ? 0.42 : 0.28;
-                } else if (mat.emissiveIntensity !== 0) {
-                  mat.emissive.setHex(0x000000);
-                  mat.emissiveIntensity = 0;
-                }
+              if (mat.emissive && mat.emissiveIntensity !== 0) {
+                mat.emissive.setHex(0x000000);
+                mat.emissiveIntensity = 0;
               }
             }
-            // Đốm sáng sao & tia lửa tự nhiên bay lơ lửng quanh nhân vật khi phát sáng hào quang
-            if (showEnergyRim && i < 16 && Math.random() < 0.55) {
-              const ang = Math.random() * Math.PI * 2;
-              const rad = 0.7 + Math.random() * 1.1;
-              spawnParticle({
-                x: sample.x + Math.cos(ang) * rad,
-                y: (isSuperman ? 2.2 : 0.6) + Math.random() * 1.8,
-                z: sample.z + Math.sin(ang) * rad,
-                vx: Math.cos(ang) * 1.4 - sample.tx * 2.5,
-                vy: 1.6 + Math.random() * 2.2,
-                vz: Math.sin(ang) * 1.4 - sample.tz * 2.5,
-                life: 0.55 + Math.random() * 0.35,
-                size: 0.55 + Math.random() * 0.45,
-                grow: 0.3,
-                color: Math.random() < 0.5 ? auraPrimary : auraSecondary,
-              });
+
+            const hasBoost = r.boost !== 'none';
+            // Tay đua tâm điểm dùng cặp PointLight đổ bóng thật (pointLightOrbPair); các tay đua phụ đang boost dùng cặp cầu sọc nhẹ
+            const showSecondaryOrbs =
+              hasBoost &&
+              (phase === 'racing' || phase === 'countdown') &&
+              r.id !== primaryFocusId &&
+              i < 16;
+            slot.visualOrbs.grp.visible = showSecondaryOrbs;
+            if (showSecondaryOrbs) {
+              slot.visualOrbs.grp.position.y = isDragon
+                ? 1.55
+                : isSuperman
+                  ? 2.15
+                  : isRocket
+                    ? 1.15
+                    : isJetpack
+                      ? 0.85
+                      : 0.05;
+              slot.visualOrbs.update(tSec, i);
             }
 
             // Hoạt ảnh chuyển động đồng bộ 6 trạng thái ('idle' | 'run' | 'sprint' | 'jump' | 'dance' | 'fall')
@@ -2920,7 +3125,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 i,
               );
             } else if (isSuperman) {
-              // Tư thế bay Siêu Nhân cho model dự phòng: 1 tay giơ thẳng về trước, 2 chân duỗi thẳng
               slot.leftArm.rotation.x = -3.05;
               slot.rightArm.rotation.x = -3.05;
               slot.leftLeg.rotation.x = 0.12;
@@ -2940,14 +3144,14 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.rightArm.rotation.x = swing * 0.85;
             }
 
-            // Đạo cụ 3D & hạt khói lửa theo đúng hướng tiếp tuyến đường cong (-tx, -tz)
+            // Đạo cụ 3D & hạt lửa theo đúng hướng tiếp tuyến đường cong (-tx, -tz)
             slot.sprintRing.visible = isSprint;
             slot.jetpackGrp.visible = isJetpack;
             slot.rocketGrp.visible = isRocket;
             slot.dragonGrp.visible = isDragon;
             slot.supermanAuraGrp.visible = isSuperman;
 
-            // Hiệu ứng vòng năng lượng tỏa quanh người khi bay Siêu Nhân (đã tắt hình nón)
+            // Hiệu ứng vòng năng lượng tỏa quanh người khi bay Siêu Nhân
             if (isSuperman) {
               for (let ar = 0; ar < slot.supermanRings.length; ar++) {
                 const ring = slot.supermanRings[ar];
@@ -2983,7 +3187,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.landingShockRing.visible = false;
             }
 
-            // Thú cưng VIP chạy lon ton theo sát bên cạnh người chơi (tự co giãn cân đối kể cả khi hóa Rồng)
+            // Thú cưng VIP chạy lon ton theo sát bên cạnh người chơi
             if (slot.petHolder.visible) {
               const petScale = isDragon ? 0.62 : 1.0;
               slot.petHolder.scale.setScalar(petScale);
@@ -3006,43 +3210,41 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             const backZ = -sample.tz;
 
             // Hiệu ứng Tia Sét Phân Nhánh 3D Chân Thật + Tia Lửa Đạn Đạo Nảy Trên Mặt Đường Nhựa 2K PBR
-            const hasBoost = r.boost !== 'none';
             slot.flashLightningGrp.visible = hasBoost;
             if (hasBoost) {
               const trailColor = isDragon
-                ? 0xfde047
+                ? 0x22d3ee
                 : isSuperman
                   ? 0x38bdf8
                   : isRocket
-                    ? 0xf43f5e
+                    ? 0xff7a18
                     : isJetpack
                       ? 0xfb923c
-                      : 0xfacc15;
+                      : 0x0088ff;
               if (i < 18 && r.speed > 2 && Math.random() < 0.65) {
                 spawnRoadGlow(
                   sample.x,
                   sample.z,
                   sample.yaw,
                   trailColor,
-                  isDragon ? 2.1 : isSuperman || isRocket ? 1.45 : 1.05,
+                  isDragon ? 2.1 : isSuperman || isRocket ? 1.55 : 1.05,
                 );
               }
               const plasmaHex = isDragon
-                ? 0xf97316
+                ? 0x22d3ee
                 : isSuperman
                   ? 0x38bdf8
                   : isRocket
-                    ? 0xf43f5e
+                    ? 0xff7a18
                     : isJetpack
                       ? 0xfb923c
-                      : 0xfacc15;
-              const coreHex = isDragon || isJetpack ? 0xfef9c3 : 0xffffff;
+                      : 0x0088ff;
+              const coreHex = isDragon ? 0xe0f2fe : isRocket || isJetpack ? 0xfef9c3 : 0xffffff;
               const boltScale = isDragon ? 1.35 : isSuperman || isRocket ? 1.18 : 1.0;
               slot.flashLightningGrp.position.y =
                 isDragon ? 1.15 : isSuperman ? 1.35 : isRocket ? 0.75 : isJetpack ? 0.55 : 0;
               slot.jaggedLightning.update(tSec, plasmaHex, coreHex, boltScale);
 
-              // Phóng tia lửa kim cương 3D nảy lách tách trên mặt đường nhựa phía sau gót chân!
               if (i < 24 && Math.random() < 0.78) {
                 spawnParticle({
                   x: sample.x + backX * 0.85 + (Math.random() - 0.5) * 0.95,
@@ -3053,7 +3255,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   vz: backZ * (9 + Math.random() * 8) + (Math.random() - 0.5) * 3.8,
                   life: 0.36 + Math.random() * 0.25,
                   size: isDragon || isRocket ? 1.25 : 0.92,
-                  color: isSuperman ? 0x38bdf8 : 0xfacc15,
+                  color: isDragon ? 0x22d3ee : isSuperman ? 0x38bdf8 : 0xfacc15,
                 });
               }
             }
@@ -3090,49 +3292,58 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   size: 0.85,
                   grow: 1.8,
                   color: Math.random() < 0.55 ? 0xf97316 : 0xe2e8f0,
-                  smoke: Math.random() >= 0.55,
                 });
               }
             }
 
             if (isRocket) {
-              slot.rocketFlameOuter.scale.y = 2.4 + Math.sin(tSec * 40 + i) * 0.75;
-              slot.rocketFlameInner.scale.y = 2.0 + Math.cos(tSec * 44 + i) * 0.55;
-              slot.rocketRing.scale.setScalar(1.0 + ((tSec * 4 + i) % 1) * 0.9);
-              if (i < 20) {
-                spawnParticle({
-                  x: sample.x + backX * 2.5 + (Math.random() - 0.5) * 0.4,
-                  y: slot.rocketGrp.position.y,
-                  z: sample.z + backZ * 2.5 + (Math.random() - 0.5) * 0.4,
-                  vx: backX * 12 + (Math.random() - 0.5) * 2,
-                  vy: (Math.random() - 0.3) * 1.5,
-                  vz: backZ * 12 + (Math.random() - 0.5) * 2,
-                  life: 0.5,
-                  size: 1.35,
-                  grow: 2.2,
-                  color: Math.random() < 0.6 ? 0xf97316 : 0xfef08a,
-                });
-                if (Math.random() < 0.65) {
+              // Luồng lửa siêu thanh Afterburner 3 lớp + Vòng sóng xung kích Shock-Diamond trượt dọc luồng phụt
+              slot.rocketFlameCore.scale.y = 2.15 + Math.sin(tSec * 56 + i) * 0.48;
+              slot.rocketFlameInner.scale.y = 3.15 + Math.cos(tSec * 48 + i) * 0.72;
+              slot.rocketFlameOuter.scale.y = 4.05 + Math.sin(tSec * 42 + i) * 0.95;
+              const outerW = 2.65 + Math.sin(tSec * 36 + i) * 0.32;
+              slot.rocketFlameOuter.scale.x = outerW;
+              slot.rocketFlameOuter.scale.z = outerW;
+              slot.rocketRing.scale.setScalar(1.05 + ((tSec * 5.2 + i) % 1) * 0.95);
+
+              for (let sr = 0; sr < slot.rocketShockRings.length; sr++) {
+                const sRing = slot.rocketShockRings[sr];
+                const p = (tSec * 4.6 + sr * 0.33 + i * 0.17) % 1;
+                sRing.position.z = -2.15 - p * 2.85;
+                sRing.scale.setScalar(Math.max(0.18, (1 - p * 0.72) * 0.85));
+              }
+
+              // Ghi nhận vị trí đuôi lửa Tên Lửa để PointLight tỏa sáng rực rỡ lên toàn vùng xung quanh!
+              const isPrim = r.id === primaryFocusId;
+              if (!bestRocketTarget || (!bestRocketTarget.isPrimary && isPrim)) {
+                bestRocketTarget = {
+                  x: sample.x + backX * 2.95,
+                  y: slot.rocketGrp.position.y + 0.35,
+                  z: sample.z + backZ * 2.95,
+                  isPrimary: isPrim,
+                };
+              }
+
+              if (i < 22) {
+                for (let spk = 0; spk < 2; spk++) {
                   spawnParticle({
-                    x: sample.x + backX * 3.0 + (Math.random() - 0.5) * 0.6,
-                    y: slot.rocketGrp.position.y,
-                    z: sample.z + backZ * 3.0 + (Math.random() - 0.5) * 0.6,
-                    vx: backX * 6 + (Math.random() - 0.5) * 2,
-                    vy: 1.4,
-                    vz: backZ * 6 + (Math.random() - 0.5) * 2,
-                    life: 0.72,
-                    size: 1.6,
-                    grow: 2.6,
-                    color: 0xf1f5f9,
-                    smoke: true,
+                    x: sample.x + backX * (2.35 + Math.random() * 0.8) + (Math.random() - 0.5) * 0.55,
+                    y: slot.rocketGrp.position.y + (Math.random() - 0.5) * 0.35,
+                    z: sample.z + backZ * (2.35 + Math.random() * 0.8) + (Math.random() - 0.5) * 0.55,
+                    vx: backX * (15 + Math.random() * 9) + (Math.random() - 0.5) * 3.8,
+                    vy: 0.8 + (Math.random() - 0.3) * 3.2,
+                    vz: backZ * (15 + Math.random() * 9) + (Math.random() - 0.5) * 3.8,
+                    life: 0.42 + Math.random() * 0.25,
+                    size: 1.45,
+                    grow: 2.0,
+                    color: Math.random() < 0.65 ? 0xff7a18 : 0xfef08a,
                   });
                 }
               }
             }
 
             if (isDragon) {
-              // Chọn ngẫu nhiên (tất định theo userId) Rồng Trung Quốc Hoàng Kim (thân uốn lượn dài, râu rồng, ngọc rồng)
-              // hoặc Rồng Châu Âu Hoàng Gia (đôi cánh uy nghi đập mạnh, thân liền khối dũng mãnh)
+              // Hóa thân Rồng Thần Hologram Ảo Diệu: Rồng Phương Đông (Cyan-Ngọc Bích-Vàng) vs Rồng Phương Tây (Lam Điện-Tím Hồng)
               let idHash = 0;
               for (let c = 0; c < r.id.length; c++) idHash = (idHash * 31 + r.id.charCodeAt(c)) | 0;
               const isEastern = Math.abs(idHash) % 2 === 0;
@@ -3142,68 +3353,79 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               slot.dragonWhiskersGrp.visible = isEastern;
               slot.dragonOrbsGrp.visible = isEastern;
 
-              // Đổi sắc thân rồng tôn phái: Rồng Trung Quốc (Hoàng Kim - Chu Sa) vs Rồng Châu Âu (Xanh Lam Hoàng Gia - Vàng Kim)
+              const targetHoloMat = isEastern ? matDragonHoloEast : matDragonHoloWest;
+              if (
+                slot.dragonHoloMeshes.length > 0 &&
+                slot.dragonHoloMeshes[0].material !== targetHoloMat
+              ) {
+                for (let hm = 0; hm < slot.dragonHoloMeshes.length; hm++) {
+                  slot.dragonHoloMeshes[hm].material = targetHoloMat;
+                }
+              }
+
+              // Chuyển động uốn lượn 22 đốt sống liền mạch chân thật (tự xoay tiếp tuyến từng đốt theo đường sóng S)
+              const waveSpd = isEastern ? 8.2 : 6.4;
               for (let s = 0; s < slot.dragonSegs.length; s++) {
                 const seg = slot.dragonSegs[s];
-                const bodyMesh = seg.children[0];
-                if (bodyMesh) {
-                  bodyMesh.material = isEastern
-                    ? s % 3 === 1
-                      ? matDragonCrimson
-                      : matDragonGold
-                    : s % 3 === 0
-                      ? matDragonGold
-                      : matDragonRoyalBlue;
-                }
-                const waveAmp = isEastern ? 0.34 + s * 0.055 : 0.14 + s * 0.03;
-                const waveSpd = isEastern ? 8.5 : 6.2;
-                seg.position.x = Math.sin(tSec * waveSpd - s * 0.42 + i) * waveAmp;
-                seg.position.y =
-                  (isEastern ? 0.48 : 0.42) +
-                  Math.cos(tSec * waveSpd - s * 0.42 + i) * (isEastern ? 0.24 : 0.12);
-                seg.position.z = 2.25 - s * (isEastern ? 0.44 : 0.37);
+                const waveAmp = isEastern ? 0.28 + s * 0.048 : 0.12 + s * 0.026;
+                const ph = tSec * waveSpd - s * 0.36 + i;
+                const sx = Math.sin(ph) * waveAmp;
+                const sy =
+                  (isEastern ? 0.48 : 0.44) + Math.cos(ph) * (isEastern ? 0.24 : 0.12);
+                const sz = 2.45 - s * (isEastern ? 0.37 : 0.32);
+                seg.position.set(sx, sy, sz);
+                seg.rotation.y = Math.cos(ph) * waveAmp * 0.55;
+                seg.rotation.x = -Math.sin(ph) * (isEastern ? 0.18 : 0.09);
+              }
+
+              // Hàm rồng khép mở thở năng lượng uy dũng & 4 chân móng vuốt đạp mây sinh động
+              slot.dragonJawGrp.rotation.x = 0.14 + Math.max(0, Math.sin(tSec * 4.2 + i)) * 0.28;
+              slot.dragonHeadGrp.position.y = 1.02 + Math.sin(tSec * 7.5 + i) * 0.22;
+              slot.dragonHeadGrp.rotation.y = Math.sin(tSec * waveSpd + i) * 0.14;
+
+              for (let lgIdx = 0; lgIdx < slot.dragonLegs.length; lgIdx++) {
+                const leg = slot.dragonLegs[lgIdx];
+                const legPh = tSec * 7.2 + lgIdx * Math.PI * 0.5 + i;
+                leg.rotation.x = Math.sin(legPh) * 0.34;
               }
 
               if (!isEastern) {
-                const flap = Math.sin(tSec * 8.5 + i) * 0.62;
+                const flap = Math.sin(tSec * 8.2 + i) * 0.66;
                 slot.dragonLeftWing.rotation.z = flap;
                 slot.dragonRightWing.rotation.z = -flap;
               }
-              slot.dragonHeadGrp.position.y = 0.95 + Math.sin(tSec * 7.5 + i) * 0.2;
-              slot.dragonOrbsGrp.rotation.y = tSec * 3.2;
-              if (i < 20) {
+              slot.dragonOrbsGrp.rotation.y = tSec * 3.4;
+
+              const isPrim = r.id === primaryFocusId;
+              if (!bestDragonTarget || (!bestDragonTarget.isPrimary && isPrim)) {
+                bestDragonTarget = {
+                  x: sample.x,
+                  y: 2.35,
+                  z: sample.z,
+                  isEastern,
+                  isPrimary: isPrim,
+                };
+              }
+
+              if (i < 20 && Math.random() < 0.72) {
                 spawnParticle({
-                  x: sample.x + backX * 2.2 + (Math.random() - 0.5) * 1.8,
-                  y: 2.2 + (Math.random() - 0.5) * 1.4,
-                  z: sample.z + backZ * 2.2 + (Math.random() - 0.5) * 1.8,
+                  x: sample.x + backX * 2.2 + (Math.random() - 0.5) * 2.1,
+                  y: 2.2 + (Math.random() - 0.5) * 1.5,
+                  z: sample.z + backZ * 2.2 + (Math.random() - 0.5) * 2.1,
                   vx: backX * 10 + (Math.random() - 0.5) * 2.5,
                   vy: 1.2 + Math.random() * 2,
                   vz: backZ * 10 + (Math.random() - 0.5) * 2.5,
-                  life: 0.65,
-                  size: 1.35,
-                  grow: 1.5,
+                  life: 0.58,
+                  size: 1.25,
+                  grow: 1.4,
                   color: isEastern
                     ? Math.random() < 0.65
-                      ? 0xfde047
-                      : 0xf97316
+                      ? 0x22d3ee
+                      : 0x34d399
                     : Math.random() < 0.6
                       ? 0x38bdf8
-                      : 0xfacc15,
+                      : 0xe879f9,
                 });
-                if (Math.random() < 0.5) {
-                  spawnParticle({
-                    x: sample.x + sample.tx * 5.2,
-                    y: 3.1,
-                    z: sample.z + sample.tz * 5.2,
-                    vx: sample.tx * 9 + (Math.random() - 0.5) * 1.5,
-                    vy: (Math.random() - 0.5) * 1.0,
-                    vz: sample.tz * 9 + (Math.random() - 0.5) * 1.5,
-                    life: 0.32,
-                    size: 1.15,
-                    grow: 1.4,
-                    color: isEastern ? 0xef4444 : 0x38bdf8,
-                  });
-                }
               }
             }
           }
@@ -3286,42 +3508,60 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const focusRacerNow = spotRacer || allRacers[0];
           const focusBoost = focusRacerNow?.boost || 'none';
 
-          // Ánh sáng hào quang thực từ nhân vật chiếu tỏa ra nền đất & các vật thể lân cận khi đang Spotlight hoặc tăng tốc/bay!
+          // 1) Ánh sáng Quả Cầu Sọc Đổ Bóng Xoay (webgl_shadowmap_pointlight.html) chiếu sáng nhân vật tăng tốc mà KHÔNG đổi màu nhân vật!
           const isFocusLit =
             Boolean(focusRacerNow) &&
             (phase === 'racing' || phase === 'countdown') &&
             (focusBoost !== 'none' || isSpotlightActive);
+          flashRoadLight.intensity = 0;
           if (isFocusLit && focusRacerNow) {
             const fs = sampleCircuit(focusRacerNow.z, focusRacerNow.x);
-            flashRoadLight.position.set(
-              fs.x,
-              focusBoost === 'superman' || focusBoost === 'dragon' ? 2.6 : 1.9,
-              fs.z,
-            );
-            const litPhase = Math.floor(tSec * 2.4) % 3;
-            flashRoadLight.color.setHex(
+            const focusHoverY =
               focusBoost === 'dragon'
-                ? 0xfde047
+                ? 2.15
                 : focusBoost === 'superman'
-                  ? litPhase === 0
-                    ? 0x22d3ee
-                    : litPhase === 1
-                      ? 0xfacc15
-                      : 0xe879f9
+                  ? 2.35
                   : focusBoost === 'rocket'
-                    ? 0xfb7185
+                    ? 1.45
                     : focusBoost === 'jetpack'
-                      ? 0xfdba74
-                      : 0xfef08a,
+                      ? 0.95
+                      : 0.12;
+            pointLightOrbPair.update(
+              true,
+              fs.x,
+              focusHoverY,
+              fs.z,
+              tSec,
+              graphicsQualityRef.current !== 'low',
             );
-            flashRoadLight.intensity =
-              focusBoost === 'dragon' || focusBoost === 'superman'
-                ? 7.2
-                : isSpotlightActive
-                  ? 5.8
-                  : 4.5;
           } else {
-            flashRoadLight.intensity = 0;
+            pointLightOrbPair.update(false, 0, 0, 0, tSec, false);
+          }
+
+          // 2) Ánh sáng rực lửa từ đuôi Tên Lửa Rocket tỏa sáng cả vùng đường nhựa, rào chắn & đối thủ xung quanh!
+          if (bestRocketTarget && (phase === 'racing' || phase === 'countdown')) {
+            rocketExhaustLight.position.set(
+              bestRocketTarget.x,
+              bestRocketTarget.y,
+              bestRocketTarget.z,
+            );
+            rocketExhaustLight.color.setHex(Math.sin(tSec * 52) > 0 ? 0xff7a18 : 0xffae42);
+            rocketExhaustLight.intensity = 18.5 + Math.sin(tSec * 48) * 4.8;
+          } else {
+            rocketExhaustLight.intensity = 0;
+          }
+
+          // 3) Ánh sáng Hologram huyền ảo từ Rồng Thần tỏa xuống mặt đường đua
+          if (bestDragonTarget && (phase === 'racing' || phase === 'countdown')) {
+            dragonHoloLight.position.set(
+              bestDragonTarget.x,
+              bestDragonTarget.y,
+              bestDragonTarget.z,
+            );
+            dragonHoloLight.color.setHex(bestDragonTarget.isEastern ? 0x22d3ee : 0xa855f7);
+            dragonHoloLight.intensity = 14.5 + Math.sin(tSec * 9.5) * 2.6;
+          } else {
+            dragonHoloLight.intensity = 0;
           }
 
           if (speedLinesRef.current) {
@@ -3376,6 +3616,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           camera.lookAt(camPose.lookX, camPose.lookY, camPose.lookZ);
 
           // Cập nhật Bầu Trời Vật Lý (PBL Sky + Sao Đêm), Cảnh Sắc Thời Gian Thực & Đổ Bóng Theo Độ Cao Nguồn Sáng!
+          // Map Thành Phố Về Đêm mặc định giữ bầu trời đêm rực sáng đèn phố & đường dầu phản chiếu khi ở chế độ 'realtime'
           const activeScenery = getActiveMap().theme.sceneryType;
           realTimeSky.update({
             mode: timeOfDayModeRef.current,
@@ -3392,7 +3633,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             leafMats: [leafMatA, leafMatB, leafMatC],
             lakeMat,
             streetLampMat: towerGlowMat,
-            isForcedNightCity: activeScenery === 'city' && timeOfDayModeRef.current === 'realtime' ? false : false,
+            isForcedNightCity: activeScenery === 'city' && timeOfDayModeRef.current === 'realtime',
           });
 
           const cw = container.clientWidth || 540;
@@ -3458,7 +3699,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               );
               droneCamera.lookAt(droneCx, 0, droneCz);
 
-              // Tạm tắt skyDome (tránh bầu trời hồng/tím của map Thành Phố Về Đêm phủ lên góc Drone) và bật nền tối tự nhiên rõ nét
               const savedFog = scene.fog.density;
               const savedBg = scene.background;
               const isNightCity = getActiveMap().theme.sceneryType === 'city';
@@ -3468,19 +3708,23 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               const savedExposure = renderer.toneMappingExposure;
               const savedBldgEmissive = buildingBodyMat.emissive.getHex();
               const savedBldgEmissiveInt = buildingBodyMat.emissiveIntensity;
+              const savedOrbAVis = pointLightOrbPair.orbA.light.visible;
+              const savedOrbBVis = pointLightOrbPair.orbB.light.visible;
 
               scene.fog.density = 0;
               realTimeSky.sky.visible = false;
               realTimeSky.sunDisc.visible = false;
               realTimeSky.stars.visible = false;
+              pointLightOrbPair.orbA.light.visible = false;
+              pointLightOrbPair.orbB.light.visible = false;
               scene.background = new THREE.Color(isNightCity ? 0x0b1120 : 0x1e293b);
               if (isNightCity) {
                 hemiLight.intensity = 1.95;
                 hemiLight.color.setHex(0xcbd5e1);
                 sunLight.intensity = 1.75;
                 renderer.toneMappingExposure = 1.35;
-                buildingBodyMat.emissive.setHex(0x1e293b);
-                buildingBodyMat.emissiveIntensity = 0.4;
+                buildingBodyMat.emissive.setHex(0xffffff);
+                buildingBodyMat.emissiveIntensity = 0.85;
               }
               for (let k = 0; k < pool.length; k++) {
                 if (pool[k].root.visible) {
@@ -3509,6 +3753,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 buildingBodyMat.emissive.setHex(savedBldgEmissive);
                 buildingBodyMat.emissiveIntensity = savedBldgEmissiveInt;
               }
+              pointLightOrbPair.orbA.light.visible = savedOrbAVis;
+              pointLightOrbPair.orbB.light.visible = savedOrbBVis;
               realTimeSky.sky.visible = true;
               realTimeSky.sunDisc.visible = true;
               realTimeSky.stars.visible = true;
@@ -3638,6 +3884,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           ro.disconnect();
           dracoLoader.dispose();
           asphaltPBR.dispose();
+          cityTarAsphaltPBR.dispose();
+          buildingFacadeTex.dispose();
+          stripedAlphaTex.dispose();
+          pointLightOrbPair.dispose();
+          matDragonHoloEast.dispose();
+          matDragonHoloWest.dispose();
           grassPBR.dispose();
           sparkSystem.dispose();
           realTimeSky.dispose();

@@ -1141,3 +1141,471 @@ export function createPhysicalSkyAndRealTimeSystem(
 
   return { sky, sunDisc, stars, update, dispose };
 }
+
+/**
+ * 5) Hiệu ứng Ánh Sáng Quả Cầu Đổ Bóng Hoa Văn Xoay chuẩn mẫu chính thức Three.js:
+ *    https://threejs.org/examples/webgl_shadowmap_pointlight.html
+ *    - Nhân vật GIỮ NGUYÊN MÀU GỐC 100% (không nhuộm emissive làm đổi màu nhân vật).
+ *    - 2 quả cầu PointLight (Xanh Lam Điện 0x0088ff & Cam Vàng Ấm 0xff8844) có vỏ cầu sọc alphaMap (repeat 1, 4.5)
+ *      xoay tròn và castShadow thật lên cơ thể nhân vật cùng mặt đường xung quanh!
+ */
+export function createStripedAlphaTexture(THREE: any) {
+  const cv = document.createElement('canvas');
+  cv.width = 2;
+  cv.height = 2;
+  const ctx = cv.getContext('2d')!;
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 1, 2, 1);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.repeat.set(1, 4.5);
+  return tex;
+}
+
+export function createPointLightShadowOrbPair(THREE: any, scene: any, stripedTex: any) {
+  const makeOrb = (colorHex: number) => {
+    const light = new THREE.PointLight(colorHex, 0, 24, 1.35);
+    light.castShadow = true;
+    light.shadow.bias = -0.004;
+    light.shadow.mapSize.set(512, 512);
+    light.shadow.camera.near = 0.25;
+    light.shadow.camera.far = 24;
+
+    const coreGeo = new THREE.SphereGeometry(0.17, 14, 8);
+    const coreMat = new THREE.MeshBasicMaterial({ color: colorHex });
+    coreMat.color.multiplyScalar(2.2);
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    light.add(coreMesh);
+
+    const shellGeo = new THREE.SphereGeometry(0.88, 32, 12);
+    const shellMat = new THREE.MeshPhongMaterial({
+      color: 0xffffff,
+      emissive: colorHex,
+      emissiveIntensity: 0.28,
+      side: THREE.DoubleSide,
+      alphaMap: stripedTex,
+      alphaTest: 0.5,
+    });
+    const shellMesh = new THREE.Mesh(shellGeo, shellMat);
+    shellMesh.castShadow = true;
+    shellMesh.receiveShadow = true;
+    light.add(shellMesh);
+
+    light.visible = false;
+    scene.add(light);
+    return { light, coreMesh, coreMat, shellMesh, shellMat, coreGeo, shellGeo };
+  };
+
+  const orbA = makeOrb(0x0088ff);
+  const orbB = makeOrb(0xff8844);
+
+  const update = (
+    active: boolean,
+    centerX: number,
+    centerY: number,
+    centerZ: number,
+    tSec: number,
+    enableShadows: boolean,
+  ) => {
+    orbA.light.visible = active;
+    orbB.light.visible = active;
+    if (!active) {
+      orbA.light.intensity = 0;
+      orbB.light.intensity = 0;
+      return;
+    }
+
+    orbA.light.castShadow = enableShadows;
+    orbB.light.castShadow = enableShadows;
+    orbA.light.intensity = 9.5;
+    orbB.light.intensity = 9.5;
+
+    // Quỹ đạo Lissajous 3D bay lượn mượt mà quanh nhân vật giống webgl_shadowmap_pointlight.html
+    const timeA = tSec * 2.15;
+    orbA.light.position.set(
+      centerX + Math.sin(timeA * 1.2) * 1.85,
+      centerY + 1.35 + Math.cos(timeA * 0.9) * 0.72,
+      centerZ + Math.cos(timeA * 1.2) * 1.85,
+    );
+    orbA.shellMesh.rotation.y = timeA * 1.35;
+    orbA.shellMesh.rotation.z = timeA * 0.85;
+
+    const timeB = timeA + Math.PI;
+    orbB.light.position.set(
+      centerX + Math.sin(timeB * 1.2) * 1.85,
+      centerY + 1.35 + Math.sin(timeB * 0.9) * 0.72,
+      centerZ + Math.cos(timeB * 1.2) * 1.85,
+    );
+    orbB.shellMesh.rotation.y = -timeB * 1.25;
+    orbB.shellMesh.rotation.x = timeB * 0.75;
+  };
+
+  const dispose = () => {
+    for (const o of [orbA, orbB]) {
+      o.coreGeo.dispose();
+      o.coreMat.dispose();
+      o.shellGeo.dispose();
+      o.shellMat.dispose();
+    }
+  };
+
+  return { orbA, orbB, update, dispose };
+}
+
+/** Cặp quả cầu sọc xoay nhẹ (không tốn CubeShadowMap) cho các tay đua phụ cùng đang tăng tốc */
+export function createVisualStripedOrbs(THREE: any, stripedTex: any) {
+  const grp = new THREE.Group();
+  const coreGeo = new THREE.SphereGeometry(0.13, 10, 8);
+  const shellGeo = new THREE.SphereGeometry(0.46, 20, 10);
+
+  const buildOne = (hex: number) => {
+    const wrap = new THREE.Group();
+    const core = new THREE.Mesh(coreGeo, new THREE.MeshBasicMaterial({ color: hex }));
+    const shell = new THREE.Mesh(
+      shellGeo,
+      new THREE.MeshBasicMaterial({
+        color: hex,
+        side: THREE.DoubleSide,
+        alphaMap: stripedTex,
+        alphaTest: 0.5,
+      }),
+    );
+    wrap.add(core, shell);
+    grp.add(wrap);
+    return { wrap, shell };
+  };
+
+  const a = buildOne(0x0088ff);
+  const b = buildOne(0xff8844);
+  grp.visible = false;
+
+  const update = (tSec: number, seed: number) => {
+    const t = tSec * 2.4 + seed;
+    a.wrap.position.set(Math.sin(t) * 1.35, 1.35 + Math.cos(t * 0.8) * 0.55, Math.cos(t) * 1.35);
+    a.shell.rotation.y = t * 1.6;
+    a.shell.rotation.z = t * 0.9;
+
+    const t2 = t + Math.PI;
+    b.wrap.position.set(Math.sin(t2) * 1.35, 1.35 + Math.sin(t2 * 0.8) * 0.55, Math.cos(t2) * 1.35);
+    b.shell.rotation.y = -t2 * 1.5;
+    b.shell.rotation.x = t2 * 0.85;
+  };
+
+  return { grp, update };
+}
+
+/**
+ * 6) Shader Vật Liệu Rồng Hologram Ảo Diệu (GLSL Fresnel Rim + Sóng Quét Năng Lượng + Xung Ánh Sáng Xuyên Thấu)
+ */
+export function createHologramDragonMaterial(THREE: any, variant: 'eastern' | 'western') {
+  const isEast = variant === 'eastern';
+  const uniforms = {
+    uTime: { value: 0 },
+    uPrimary: { value: new THREE.Color(isEast ? 0x06b6d4 : 0x38bdf8) },
+    uSecondary: { value: new THREE.Color(isEast ? 0x34d399 : 0xa855f7) },
+    uAccent: { value: new THREE.Color(isEast ? 0xfde047 : 0xf472b6) },
+  };
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      varying vec3 vNormalW;
+      varying vec3 vWorldPos;
+      varying vec3 vLocalPos;
+      void main() {
+        vLocalPos = position;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uPrimary;
+      uniform vec3 uSecondary;
+      uniform vec3 uAccent;
+      varying vec3 vNormalW;
+      varying vec3 vWorldPos;
+      varying vec3 vLocalPos;
+
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vWorldPos);
+        float ndv = abs(dot(normalize(vNormalW), viewDir));
+        // Viền sáng Fresnel sắc sảo tôn lên từng khối cơ, vảy, sừng và móng vuốt rồng
+        float fresnel = pow(1.0 - clamp(ndv, 0.0, 1.0), 1.85);
+
+        // Đường quét Hologram mảnh + Sóng xung năng lượng chạy dọc thân rồng
+        float scanFine = 0.65 + 0.35 * sin(vWorldPos.y * 34.0 - uTime * 12.0);
+        float energyWave = 0.5 + 0.5 * sin(vWorldPos.z * 1.4 - vWorldPos.x * 0.8 + uTime * 6.5);
+        float spinePulse = pow(0.5 + 0.5 * sin(vLocalPos.y * 5.0 + uTime * 8.0), 3.0);
+
+        // Hòa sắc cầu vồng Hologram ảo diệu
+        vec3 baseCol = mix(uPrimary, uSecondary, energyWave);
+        baseCol = mix(baseCol, uAccent, fresnel * 0.62 + spinePulse * 0.28);
+
+        // Lõi mờ ảo xuyên thấu + viền rực sáng
+        float coreGlow = 0.16 + 0.18 * scanFine;
+        float alpha = clamp(coreGlow + fresnel * 0.88 + spinePulse * 0.22, 0.14, 0.96);
+        vec3 finalCol = baseCol * (0.78 + fresnel * 1.65) * scanFine + uAccent * pow(fresnel, 3.5) * 0.55;
+
+        gl_FragColor = vec4(finalCol, alpha);
+      }
+    `,
+  });
+
+  return mat;
+}
+
+/**
+ * 7) Bộ Texture PBR 2K (2048x2048) Đường Nhựa Dầu Đô Thị (Urban Oily Bitumen Blacktop) cho Map Thành Phố Về Đêm:
+ *    - Mặt nhựa hắc ín đen bóng dầu (phản chiếu lung linh ánh đèn tòa nhà & đèn đường).
+ *    - Vạch tim đường kép màu vàng đô thị (Double Solid Yellow) + vạch phân làn đứt đoạn trắng + mép vỉa hè bê tông.
+ */
+export function create2KCityTarAsphaltPBR(
+  THREE: any,
+  maxAnisotropy: number,
+  texSize = 2048,
+): PBRTextureSet {
+  const N = texSize;
+  const heightBuf = new Float32Array(N * N);
+
+  const albCv = document.createElement('canvas');
+  albCv.width = N;
+  albCv.height = N;
+  const albCtx = albCv.getContext('2d')!;
+  const albImg = albCtx.createImageData(N, N);
+  const albData = albImg.data;
+
+  const rghCv = document.createElement('canvas');
+  rghCv.width = N;
+  rghCv.height = N;
+  const rghCtx = rghCv.getContext('2d')!;
+  const rghImg = rghCtx.createImageData(N, N);
+  const rghData = rghImg.data;
+
+  const dashPeriod = N / 2;
+
+  for (let y = 0; y < N; y++) {
+    const inDash = (y % dashPeriod) > dashPeriod * 0.16 && (y % dashPeriod) < dashPeriod * 0.72;
+    const rowOff = y * N;
+
+    for (let x = 0; x < N; x++) {
+      const idx = rowOff + x;
+      const p4 = idx * 4;
+      const uNorm = x / N;
+
+      const fine = hash2D(x, y, 503);
+      const med = valueNoise2D((x / N) * 192, (y / N) * 192, 192, 613);
+      // Vệt bóng dầu / ẩm sương đêm dọc các làn xe đô thị (giúp phản chiếu đèn phố siêu thực)
+      const oilPatch = valueNoise2D((x / N) * 12, (y / N) * 24, 24, 719);
+      const slick = Math.max(0, (oilPatch - 0.42) * 1.72);
+
+      const tarStone = fine > 0.88 ? (fine - 0.88) * 3.6 : 0;
+      heightBuf[idx] = med * 0.42 + fine * 0.22 + tarStone * 0.5 - slick * 0.22;
+
+      // Nhựa hắc ín đen sâu kiểu đại lộ thành phố về đêm
+      const base = 13 + med * 10 + tarStone * 28 - slick * 4;
+      let r = base;
+      let g = base + 2;
+      let b = base + 6;
+      // Độ nhám thấp hơn hẳn ở các vệt nhựa dầu (0.20..0.58) để bắt bóng đèn rực rỡ!
+      let rough = 148 - slick * 96 - tarStone * 14;
+
+      // Vạch tim đường ĐÔI MÀU VÀNG chuẩn đại lộ thành phố
+      const centerDist = Math.abs(uNorm - 0.5);
+      if (centerDist >= 0.006 && centerDist <= 0.0145) {
+        r = 245;
+        g = 192;
+        b = 28;
+        rough = 64;
+        heightBuf[idx] = 0.72;
+      }
+
+      // 2 vạch phân làn đứt đoạn màu trắng hai bên đại lộ
+      if (inDash && (Math.abs(uNorm - 0.25) <= 0.005 || Math.abs(uNorm - 0.75) <= 0.005)) {
+        r = 226;
+        g = 232;
+        b = 240;
+        rough = 68;
+        heightBuf[idx] = 0.7;
+      }
+
+      // Vạch giới hạn mép đường trắng phản quang sát vỉa hè đô thị
+      if (Math.abs(uNorm - 0.03) <= 0.0045 || Math.abs(uNorm - 0.97) <= 0.0045) {
+        r = 203;
+        g = 213;
+        b = 225;
+        rough = 76;
+      }
+
+      albData[p4] = Math.max(0, Math.min(255, r));
+      albData[p4 + 1] = Math.max(0, Math.min(255, g));
+      albData[p4 + 2] = Math.max(0, Math.min(255, b));
+      albData[p4 + 3] = 255;
+
+      const rg = Math.max(28, Math.min(220, rough));
+      rghData[p4] = rg;
+      rghData[p4 + 1] = rg;
+      rghData[p4 + 2] = rg;
+      rghData[p4 + 3] = 255;
+    }
+  }
+
+  albCtx.putImageData(albImg, 0, 0);
+  rghCtx.putImageData(rghImg, 0, 0);
+
+  const nrmCv = document.createElement('canvas');
+  nrmCv.width = N;
+  nrmCv.height = N;
+  const nrmCtx = nrmCv.getContext('2d')!;
+  const nrmImg = nrmCtx.createImageData(N, N);
+  const nrmData = nrmImg.data;
+  const strength = 2.15;
+
+  for (let y = 0; y < N; y++) {
+    const ym = ((y - 1 + N) % N) * N;
+    const yp = ((y + 1) % N) * N;
+    const y0 = y * N;
+    for (let x = 0; x < N; x++) {
+      const xm = (x - 1 + N) % N;
+      const xp = (x + 1) % N;
+      const dX = (heightBuf[y0 + xp] - heightBuf[y0 + xm]) * strength;
+      const dY = (heightBuf[yp + x] - heightBuf[ym + x]) * strength;
+      const invLen = 1 / Math.sqrt(dX * dX + dY * dY + 1);
+      const p4 = (y0 + x) * 4;
+      nrmData[p4] = (-dX * invLen * 0.5 + 0.5) * 255;
+      nrmData[p4 + 1] = (-dY * invLen * 0.5 + 0.5) * 255;
+      nrmData[p4 + 2] = (invLen * 0.5 + 0.5) * 255;
+      nrmData[p4 + 3] = 255;
+    }
+  }
+  nrmCtx.putImageData(nrmImg, 0, 0);
+
+  const setupTex = (cv: HTMLCanvasElement, isSrgb: boolean) => {
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = isSrgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = maxAnisotropy;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    return t;
+  };
+
+  const map = setupTex(albCv, true);
+  const normalMap = setupTex(nrmCv, false);
+  const roughnessMap = setupTex(rghCv, false);
+
+  return {
+    map,
+    normalMap,
+    roughnessMap,
+    dispose: () => {
+      map.dispose();
+      normalMap.dispose();
+      roughnessMap.dispose();
+    },
+  };
+}
+
+/**
+ * 8) Texture Mặt Kính Tòa Nhà Cao Tầng Có Hàng Trăm Ô Cửa Sổ Sáng Đèn Về Đêm (Albedo + EmissiveMap)
+ */
+export function createCityBuildingFacadeTextures(THREE: any, maxAnisotropy: number) {
+  const W = 512;
+  const H = 1024;
+
+  const albCv = document.createElement('canvas');
+  albCv.width = W;
+  albCv.height = H;
+  const albCtx = albCv.getContext('2d')!;
+
+  const emiCv = document.createElement('canvas');
+  emiCv.width = W;
+  emiCv.height = H;
+  const emiCtx = emiCv.getContext('2d')!;
+
+  // Khung bê tông / kính tối màu của tòa nhà
+  albCtx.fillStyle = '#0f172a';
+  albCtx.fillRect(0, 0, W, H);
+  emiCtx.fillStyle = '#000000';
+  emiCtx.fillRect(0, 0, W, H);
+
+  const cols = 12;
+  const rows = 28;
+  const cellW = W / cols;
+  const cellH = H / rows;
+  const padX = 5;
+  const padY = 6;
+
+  const warmColors = ['#fef3c7', '#fde68a', '#fbbf24', '#e0f2fe', '#bae6fd', '#fed7aa'];
+
+  for (let r = 0; r < rows; r++) {
+    // Tầng kỹ thuật tối xen kẽ tự nhiên
+    const isMechFloor = r === 0 || r === 14;
+    for (let c = 0; c < cols; c++) {
+      const wx = Math.round(c * cellW + padX);
+      const wy = Math.round(r * cellH + padY);
+      const ww = Math.round(cellW - padX * 2);
+      const wh = Math.round(cellH - padY * 2);
+
+      // Kính phản quang nền tối
+      albCtx.fillStyle = '#1e293b';
+      albCtx.fillRect(wx, wy, ww, wh);
+
+      const rnd = hash2D(c, r, 887);
+      if (!isMechFloor && rnd > 0.34) {
+        const colIdx = Math.floor(hash2D(c, r, 911) * warmColors.length);
+        const winColor = warmColors[colIdx];
+        const bright = 0.55 + hash2D(c, r, 953) * 0.45;
+
+        albCtx.fillStyle = winColor;
+        albCtx.globalAlpha = 0.88;
+        albCtx.fillRect(wx, wy, ww, wh);
+        albCtx.globalAlpha = 1.0;
+
+        emiCtx.fillStyle = winColor;
+        emiCtx.globalAlpha = bright;
+        emiCtx.fillRect(wx, wy, ww, wh);
+        // Rèm cửa sổ che nửa trên ở một số căn hộ cho cực kỳ chân thật
+        if (hash2D(c, r, 977) > 0.62) {
+          emiCtx.fillStyle = 'rgba(15,23,42,0.55)';
+          emiCtx.fillRect(wx, wy, ww, Math.round(wh * 0.42));
+        }
+        emiCtx.globalAlpha = 1.0;
+      }
+    }
+  }
+
+  const setup = (cv: HTMLCanvasElement) => {
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = maxAnisotropy;
+    return t;
+  };
+
+  const map = setup(albCv);
+  const emissiveMap = setup(emiCv);
+
+  return {
+    map,
+    emissiveMap,
+    dispose: () => {
+      map.dispose();
+      emissiveMap.dispose();
+    },
+  };
+}
+
+
