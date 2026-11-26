@@ -940,11 +940,45 @@ export function createPhysicalSkyAndRealTimeSystem(
   sky.scale.setScalar(900);
   scene.add(sky);
 
-  // Scene phụ siêu nhẹ chỉ chứa Sky để tái tạo bản đồ phản xạ môi trường IBL (PMREM) không tốn FPS
+  // Scene phụ siêu nhẹ chứa Sky + Đường Chân Trời Đèn Phố Neon 360° (dùng khi vào Map Thành Phố để mặt đường nhựa dầu phản chiếu ánh đèn phố rực rỡ!)
   const iblSkyScene = new THREE.Scene();
   const iblSky = new SkyClass();
   iblSky.scale.setScalar(100);
   iblSkyScene.add(iblSky);
+
+  const iblCityGroup = new THREE.Group();
+  const iblNeonPalette = [0xffe082, 0x22d3ee, 0xfb7185, 0xffb74d, 0xa855f7, 0x38bdf8, 0xfef08a, 0x34d399];
+  const iblPanelGeo = new THREE.PlaneGeometry(5.5, 16);
+  const iblStripGeo = new THREE.PlaneGeometry(7.5, 2.6);
+  const iblDisposableMats: any[] = [];
+  for (let i = 0; i < 28; i++) {
+    const ang = (i / 28) * Math.PI * 2;
+    const dist = 34;
+    const colHex = iblNeonPalette[i % iblNeonPalette.length];
+    const pMat = new THREE.MeshBasicMaterial({ color: colHex, side: THREE.DoubleSide });
+    pMat.color.multiplyScalar(2.1);
+    iblDisposableMats.push(pMat);
+    const panel = new THREE.Mesh(iblPanelGeo, pMat);
+    const hScale = 0.55 + (i % 5) * 0.28;
+    panel.scale.set(1, hScale, 1);
+    panel.position.set(Math.cos(ang) * dist, 5.5 * hScale, Math.sin(ang) * dist);
+    panel.lookAt(0, 4, 0);
+    iblCityGroup.add(panel);
+
+    // Dải đèn cửa hiệu tầng trệt sát đường chân trời để phản chiếu dài trên mặt nhựa dầu bóng ướt
+    const sMat = new THREE.MeshBasicMaterial({
+      color: iblNeonPalette[(i + 3) % iblNeonPalette.length],
+      side: THREE.DoubleSide,
+    });
+    sMat.color.multiplyScalar(2.8);
+    iblDisposableMats.push(sMat);
+    const strip = new THREE.Mesh(iblStripGeo, sMat);
+    strip.position.set(Math.cos(ang) * (dist - 1), 1.4, Math.sin(ang) * (dist - 1));
+    strip.lookAt(0, 1.2, 0);
+    iblCityGroup.add(strip);
+  }
+  iblCityGroup.visible = false;
+  iblSkyScene.add(iblCityGroup);
 
   // 2) Đĩa Mặt Trời / Mặt Trăng phát sáng vật lý trên vòm trời
   const sunDiscMat = new THREE.MeshBasicMaterial({
@@ -997,6 +1031,7 @@ export function createPhysicalSkyAndRealTimeSystem(
 
   let lastIblElev = -999;
   let lastIblAt = -999;
+  let lastIblCityNight: boolean | null = null;
   let currentEnvRT: any = null;
 
   const update = (opts: {
@@ -1015,6 +1050,7 @@ export function createPhysicalSkyAndRealTimeSystem(
     lakeMat: any;
     streetLampMat?: any;
     isForcedNightCity?: boolean;
+    isCityMap?: boolean;
   }): RealTimeLightingState => {
     const hour24 = opts.isForcedNightCity ? 21.2 : resolveHour24(opts.mode, opts.tSec);
 
@@ -1165,16 +1201,21 @@ export function createPhysicalSkyAndRealTimeSystem(
       }
     }
 
-    // Tái tạo bản đồ bức xạ môi trường IBL (PMREM PBL) định kỳ khi góc mặt trời thay đổi đáng kể
+    const useCityNightIbl = Boolean(opts.isCityMap) && isNightLampsOn;
+    const cityModeChanged = lastIblCityNight !== useCityNightIbl;
+
+    // Tái tạo bản đồ bức xạ môi trường IBL (PMREM PBL) ngay khi đổi sang Thành Phố hoặc khi góc mặt trời thay đổi
     if (
-      Math.abs(sunElevationRad - lastIblElev) > 0.045 &&
-      opts.tSec - lastIblAt > 2.5
+      cityModeChanged ||
+      (Math.abs(sunElevationRad - lastIblElev) > 0.045 && opts.tSec - lastIblAt > 2.5)
     ) {
       lastIblElev = sunElevationRad;
       lastIblAt = opts.tSec;
-      const nextRT = pmrem.fromScene(iblSkyScene, 0.035);
+      lastIblCityNight = useCityNightIbl;
+      iblCityGroup.visible = useCityNightIbl;
+      const nextRT = pmrem.fromScene(iblSkyScene, useCityNightIbl ? 0.018 : 0.035);
       scene.environment = nextRT.texture;
-      scene.environmentIntensity = 0.55 + dayFactor * 0.45;
+      scene.environmentIntensity = useCityNightIbl ? 1.38 : 0.55 + dayFactor * 0.45;
       if (currentEnvRT) currentEnvRT.dispose();
       currentEnvRT = nextRT;
     }
@@ -1191,6 +1232,9 @@ export function createPhysicalSkyAndRealTimeSystem(
 
   const dispose = () => {
     if (currentEnvRT) currentEnvRT.dispose();
+    iblPanelGeo.dispose();
+    iblStripGeo.dispose();
+    iblDisposableMats.forEach((m) => m.dispose());
     starGeo.dispose();
     starMat.dispose();
     sunDisc.geometry.dispose();
@@ -1352,9 +1396,10 @@ export function createHologramDragonMaterial(THREE: any, variant: 'eastern' | 'w
 }
 
 /**
- * 7) Bộ Texture PBR 2K (2048x2048) Đường Nhựa Dầu Đô Thị (Urban Oily Bitumen Blacktop) cho Map Thành Phố Về Đêm:
- *    - Mặt nhựa hắc ín đen bóng dầu (phản chiếu lung linh ánh đèn tòa nhà & đèn đường).
- *    - Vạch tim đường kép màu vàng đô thị (Double Solid Yellow) + vạch phân làn đứt đoạn trắng + mép vỉa hè bê tông.
+ * 7) Bộ Texture PBR 2K (2048x2048) ĐƯỜNG NHỰA DẦU ĐÔ THỊ (Hot-Mix Bitumen Tar / Oily Wet Asphalt):
+ *    - Cốt đá dăm macadam trộn nhựa hắc ín đen nhánh (hạt đá nổi khối rõ nét trên NormalMap).
+ *    - 4 vệt bánh xe mài bóng dầu dọc làn chạy + các mạch trám nhựa nóng (tar crack seals) đen bóng gương + vũng ẩm sương đêm.
+ *    - Vạch sơn nhiệt dẻo đô thị (vạch đôi vàng tim đường + vạch đứt trắng phân làn) có vết lốp cán tự nhiên.
  */
 export function create2KCityTarAsphaltPBR(
   THREE: any,
@@ -1381,64 +1426,126 @@ export function create2KCityTarAsphaltPBR(
   const dashPeriod = N / 2;
 
   for (let y = 0; y < N; y++) {
-    const inDash = (y % dashPeriod) > dashPeriod * 0.16 && (y % dashPeriod) < dashPeriod * 0.72;
+    const inDash = (y % dashPeriod) > dashPeriod * 0.18 && (y % dashPeriod) < dashPeriod * 0.7;
     const rowOff = y * N;
+    const vNorm = y / N;
+
+    // Mạch trám nhựa nóng (Hot-poured bitumen tar crack-seal) uốn lượn tự nhiên dọc làn đường
+    const seamWaveA = 0.31 + Math.sin(vNorm * Math.PI * 6.0) * 0.018 + (valueNoise2D(1.3, vNorm * 32, 32, 811) - 0.5) * 0.022;
+    const seamWaveB = 0.69 + Math.cos(vNorm * Math.PI * 4.0 + 1.1) * 0.016 + (valueNoise2D(4.7, vNorm * 32, 32, 823) - 0.5) * 0.022;
 
     for (let x = 0; x < N; x++) {
       const idx = rowOff + x;
       const p4 = idx * 4;
       const uNorm = x / N;
 
+      // Hạt đá dăm trộn nhựa nóng (Coarse + Fine Crushed Basalt Aggregate)
       const fine = hash2D(x, y, 503);
-      const med = valueNoise2D((x / N) * 192, (y / N) * 192, 192, 613);
-      // Vệt bóng dầu / ẩm sương đêm dọc các làn xe đô thị (giúp phản chiếu đèn phố siêu thực)
-      const oilPatch = valueNoise2D((x / N) * 12, (y / N) * 24, 24, 719);
-      const slick = Math.max(0, (oilPatch - 0.42) * 1.72);
+      const gravelCoarse = valueNoise2D(uNorm * 320, vNorm * 320, 320, 607);
+      const gravelMed = valueNoise2D(uNorm * 140, vNorm * 140, 140, 613);
+      const stonePeak =
+        (gravelCoarse > 0.62 ? (gravelCoarse - 0.62) * 2.6 : 0) +
+        (fine > 0.84 ? (fine - 0.84) * 3.1 : 0);
 
-      const tarStone = fine > 0.88 ? (fine - 0.88) * 3.6 : 0;
-      heightBuf[idx] = med * 0.42 + fine * 0.22 + tarStone * 0.5 - slick * 0.22;
+      // 4 vệt bánh xe mài bóng dầu (Polished Oily Wheel Ruts) dọc 2 làn đại lộ
+      const rutDist = Math.min(
+        Math.abs(uNorm - 0.15),
+        Math.abs(uNorm - 0.36),
+        Math.abs(uNorm - 0.64),
+        Math.abs(uNorm - 0.85),
+      );
+      const wheelPolish = Math.max(0, 1 - rutDist / 0.068);
 
-      // Nhựa hắc ín đen sâu kiểu đại lộ thành phố về đêm
-      const base = 13 + med * 10 + tarStone * 28 - slick * 4;
-      let r = base;
-      let g = base + 2;
-      let b = base + 6;
-      // Độ nhám thấp hơn hẳn ở các vệt nhựa dầu (0.20..0.58) để bắt bóng đèn rực rỡ!
-      let rough = 148 - slick * 96 - tarStone * 14;
+      // Mảng loang dầu & hơi ẩm sương đêm trên mặt nhựa hắc ín
+      const oilNoise =
+        valueNoise2D(uNorm * 10, vNorm * 20, 20, 719) * 0.65 +
+        valueNoise2D(uNorm * 28, vNorm * 48, 48, 733) * 0.35;
+      const oilSlick = Math.max(0, Math.min(1, (oilNoise - 0.44) * 2.35));
 
-      // Vạch tim đường ĐÔI MÀU VÀNG chuẩn đại lộ thành phố
+      // Kiểm tra mạch trám nhựa hắc ín lỏng đen nhánh (Tar Overband Crack Seal)
+      const onTarSeam =
+        Math.abs(uNorm - seamWaveA) < 0.0032 || Math.abs(uNorm - seamWaveB) < 0.0028;
+
+      // Độ cao vi mô: đá dăm nhô lên, nhựa dầu & vũng dầu lấp phẳng bóng mượt
+      const slickFlatten = Math.max(oilSlick * 0.72, wheelPolish * 0.45);
+      let hVal =
+        (gravelMed * 0.35 + stonePeak * 0.68 + fine * 0.18) * (1 - slickFlatten * 0.58) -
+        wheelPolish * 0.08;
+
+      // Màu nền Nhựa Dầu Hắc Ín (đen xanh sâu của nhựa đường nóng chảy + điểm hạt đá bazan)
+      const stoneGlint = stonePeak * (26 - oilSlick * 12);
+      const baseDark = 8 + gravelMed * 8 - oilSlick * 3 - wheelPolish * 2;
+      let r = baseDark + stoneGlint * 0.92;
+      let g = baseDark + 1.5 + stoneGlint * 0.98;
+      let b = baseDark + 4.5 + stoneGlint * 1.12;
+
+      // Độ nhám PBR: vùng nhựa dầu / vệt bánh xe / mảng ẩm cực bóng (14..52/255), đỉnh đá dăm nhám vừa (95..145/255)
+      let rough =
+        132 -
+        wheelPolish * 58 -
+        oilSlick * 86 +
+        stonePeak * 22;
+
+      if (onTarSeam) {
+        // Mạch nhựa đường nấu chảy trám khe nứt: đen tuyền & bóng loáng như gương!
+        r = 5;
+        g = 6;
+        b = 9;
+        rough = 14;
+        hVal = 0.48;
+      }
+
+      // Rãnh thoát nước mép vỉa hè (bóng ướt sát lề)
+      if (uNorm < 0.028 || uNorm > 0.972) {
+        r *= 0.75;
+        g *= 0.78;
+        b *= 0.82;
+        rough = 22;
+      }
+
+      // Vạch tim đường ĐÔI MÀU VÀNG ĐÔ THỊ (có độ mòn tự nhiên theo hạt nhựa đường)
       const centerDist = Math.abs(uNorm - 0.5);
-      if (centerDist >= 0.006 && centerDist <= 0.0145) {
-        r = 245;
-        g = 192;
-        b = 28;
-        rough = 64;
-        heightBuf[idx] = 0.72;
+      const paintWear = gravelCoarse * 0.25 + wheelPolish * 0.15;
+      if (centerDist >= 0.006 && centerDist <= 0.0145 && paintWear < 0.34) {
+        r = 236 - fine * 18;
+        g = 182 - fine * 16;
+        b = 24;
+        rough = 58;
+        hVal += 0.28;
       }
 
       // 2 vạch phân làn đứt đoạn màu trắng hai bên đại lộ
-      if (inDash && (Math.abs(uNorm - 0.25) <= 0.005 || Math.abs(uNorm - 0.75) <= 0.005)) {
-        r = 226;
-        g = 232;
-        b = 240;
-        rough = 68;
-        heightBuf[idx] = 0.7;
+      if (
+        inDash &&
+        (Math.abs(uNorm - 0.255) <= 0.0048 || Math.abs(uNorm - 0.745) <= 0.0048) &&
+        paintWear < 0.36
+      ) {
+        r = 218 - fine * 16;
+        g = 224 - fine * 16;
+        b = 232 - fine * 14;
+        rough = 62;
+        hVal += 0.26;
       }
 
-      // Vạch giới hạn mép đường trắng phản quang sát vỉa hè đô thị
-      if (Math.abs(uNorm - 0.03) <= 0.0045 || Math.abs(uNorm - 0.97) <= 0.0045) {
-        r = 203;
-        g = 213;
-        b = 225;
-        rough = 76;
+      // Vạch giới hạn mép đường trắng sát rãnh thoát nước
+      if (
+        (Math.abs(uNorm - 0.034) <= 0.004 || Math.abs(uNorm - 0.966) <= 0.004) &&
+        paintWear < 0.38
+      ) {
+        r = 196;
+        g = 204;
+        b = 216;
+        rough = 68;
       }
+
+      heightBuf[idx] = hVal;
 
       albData[p4] = Math.max(0, Math.min(255, r));
       albData[p4 + 1] = Math.max(0, Math.min(255, g));
       albData[p4 + 2] = Math.max(0, Math.min(255, b));
       albData[p4 + 3] = 255;
 
-      const rg = Math.max(28, Math.min(220, rough));
+      const rg = Math.max(12, Math.min(185, rough));
       rghData[p4] = rg;
       rghData[p4 + 1] = rg;
       rghData[p4 + 2] = rg;
@@ -1455,7 +1562,7 @@ export function create2KCityTarAsphaltPBR(
   const nrmCtx = nrmCv.getContext('2d')!;
   const nrmImg = nrmCtx.createImageData(N, N);
   const nrmData = nrmImg.data;
-  const strength = 2.15;
+  const strength = 3.25;
 
   for (let y = 0; y < N; y++) {
     const ym = ((y - 1 + N) % N) * N;
@@ -1505,73 +1612,215 @@ export function create2KCityTarAsphaltPBR(
 }
 
 /**
- * 8) Texture Mặt Kính Tòa Nhà Cao Tầng Có Hàng Trăm Ô Cửa Sổ Sáng Đèn Về Đêm (Albedo + EmissiveMap)
+ * 8) Bộ 3 Kiểu Kiến Trúc Mặt Tiền Tòa Nhà Thành Phố + Cửa Hiệu Tầng Trệt Sáng Đèn (tham khảo webgpu_lights_clustered_city.html)
  */
+export interface BuildingFacadeVariant {
+  map: any;
+  emissiveMap: any;
+}
+
 export function createCityBuildingFacadeTextures(THREE: any, maxAnisotropy: number) {
-  const W = 512;
-  const H = 1024;
+  const buildVariant = (
+    style: 'curtain_glass' | 'metro_apartment' | 'commercial_tower',
+    seedBase: number,
+  ): BuildingFacadeVariant => {
+    const W = 512;
+    const H = 1024;
 
-  const albCv = document.createElement('canvas');
-  albCv.width = W;
-  albCv.height = H;
-  const albCtx = albCv.getContext('2d')!;
+    const albCv = document.createElement('canvas');
+    albCv.width = W;
+    albCv.height = H;
+    const albCtx = albCv.getContext('2d')!;
 
-  const emiCv = document.createElement('canvas');
-  emiCv.width = W;
-  emiCv.height = H;
-  const emiCtx = emiCv.getContext('2d')!;
+    const emiCv = document.createElement('canvas');
+    emiCv.width = W;
+    emiCv.height = H;
+    const emiCtx = emiCv.getContext('2d')!;
 
-  // Khung bê tông / kính tối màu của tòa nhà
-  albCtx.fillStyle = '#0f172a';
-  albCtx.fillRect(0, 0, W, H);
-  emiCtx.fillStyle = '#000000';
-  emiCtx.fillRect(0, 0, W, H);
+    // Nền bê tông / khung thép kiến trúc
+    albCtx.fillStyle =
+      style === 'curtain_glass'
+        ? '#0b1324'
+        : style === 'metro_apartment'
+          ? '#1c1917'
+          : '#111827';
+    albCtx.fillRect(0, 0, W, H);
+    emiCtx.fillStyle = '#000000';
+    emiCtx.fillRect(0, 0, W, H);
 
-  const cols = 12;
-  const rows = 28;
-  const cellW = W / cols;
-  const cellH = H / rows;
-  const padX = 5;
-  const padY = 6;
+    const cols = style === 'curtain_glass' ? 14 : style === 'metro_apartment' ? 8 : 10;
+    const rows = style === 'curtain_glass' ? 26 : style === 'metro_apartment' ? 20 : 22;
+    // Dành 11% dưới cùng (y = H*0.89 .. H) làm Tầng Trệt Cửa Hiệu / Sảnh Thương Mại Sáng Đèn (Storefront Arcade)
+    const towerH = Math.round(H * 0.88);
+    const cellW = W / cols;
+    const cellH = towerH / rows;
+    const padX = style === 'curtain_glass' ? 3 : 7;
+    const padY = style === 'curtain_glass' ? 4 : 8;
 
-  const warmColors = ['#fef3c7', '#fde68a', '#fbbf24', '#e0f2fe', '#bae6fd', '#fed7aa'];
+    const palette =
+      style === 'curtain_glass'
+        ? ['#e0f2fe', '#bae6fd', '#fef3c7', '#7dd3fc', '#fde68a']
+        : style === 'metro_apartment'
+          ? ['#fef3c7', '#fde68a', '#fed7aa', '#fbbf24', '#ffedd5']
+          : ['#fef9c3', '#e0f2fe', '#fde68a', '#ddd6fe', '#bae6fd'];
 
-  for (let r = 0; r < rows; r++) {
-    // Tầng kỹ thuật tối xen kẽ tự nhiên
-    const isMechFloor = r === 0 || r === 14;
-    for (let c = 0; c < cols; c++) {
-      const wx = Math.round(c * cellW + padX);
-      const wy = Math.round(r * cellH + padY);
-      const ww = Math.round(cellW - padX * 2);
-      const wh = Math.round(cellH - padY * 2);
+    // Gờ chỉ ngang phân tầng kiến trúc
+    albCtx.fillStyle = style === 'metro_apartment' ? '#292524' : '#1e293b';
+    for (let r = 0; r <= rows; r++) {
+      albCtx.fillRect(0, Math.round(r * cellH), W, 3);
+    }
 
-      // Kính phản quang nền tối
-      albCtx.fillStyle = '#1e293b';
-      albCtx.fillRect(wx, wy, ww, wh);
+    for (let r = 0; r < rows; r++) {
+      const isMechFloor = r === 0 || r === Math.floor(rows * 0.52);
+      // Cả tầng văn phòng đang làm việc sáng theo cụm tự nhiên
+      const floorBusy = hash2D(r, 1, seedBase + 17) > 0.45;
+      for (let c = 0; c < cols; c++) {
+        const wx = Math.round(c * cellW + padX);
+        const wy = Math.round(r * cellH + padY);
+        const ww = Math.max(4, Math.round(cellW - padX * 2));
+        const wh = Math.max(6, Math.round(cellH - padY * 2));
 
-      const rnd = hash2D(c, r, 887);
-      if (!isMechFloor && rnd > 0.34) {
-        const colIdx = Math.floor(hash2D(c, r, 911) * warmColors.length);
-        const winColor = warmColors[colIdx];
-        const bright = 0.55 + hash2D(c, r, 953) * 0.45;
-
-        albCtx.fillStyle = winColor;
-        albCtx.globalAlpha = 0.88;
+        albCtx.fillStyle = '#172033';
         albCtx.fillRect(wx, wy, ww, wh);
-        albCtx.globalAlpha = 1.0;
 
-        emiCtx.fillStyle = winColor;
-        emiCtx.globalAlpha = bright;
-        emiCtx.fillRect(wx, wy, ww, wh);
-        // Rèm cửa sổ che nửa trên ở một số căn hộ cho cực kỳ chân thật
-        if (hash2D(c, r, 977) > 0.62) {
-          emiCtx.fillStyle = 'rgba(15,23,42,0.55)';
-          emiCtx.fillRect(wx, wy, ww, Math.round(wh * 0.42));
+        const rnd = hash2D(c, r, seedBase + 887);
+        const threshold = floorBusy ? 0.32 : 0.68;
+        if (!isMechFloor && rnd > threshold) {
+          const colIdx = Math.floor(hash2D(c, r, seedBase + 911) * palette.length);
+          const winColor = palette[colIdx];
+          const bright = 0.48 + hash2D(c, r, seedBase + 953) * 0.52;
+
+          albCtx.fillStyle = winColor;
+          albCtx.globalAlpha = 0.85;
+          albCtx.fillRect(wx, wy, ww, wh);
+          albCtx.globalAlpha = 1.0;
+
+          emiCtx.fillStyle = winColor;
+          emiCtx.globalAlpha = bright;
+          emiCtx.fillRect(wx, wy, ww, wh);
+
+          if (hash2D(c, r, seedBase + 977) > 0.58) {
+            emiCtx.fillStyle = 'rgba(15,23,42,0.58)';
+            emiCtx.fillRect(wx, wy, ww, Math.round(wh * 0.44));
+          }
+          emiCtx.globalAlpha = 1.0;
         }
-        emiCtx.globalAlpha = 1.0;
       }
     }
+
+    // Vẽ Tầng Trệt Cửa Hàng / Showroom Đô Thị Sáng Rực Rỡ (Storefront Base chuẩn webgpu_lights_clustered_city)
+    const shopTop = towerH + 6;
+    const shopH = H - shopTop - 6;
+    const shopCount = 4;
+    const shopW = W / shopCount;
+    const shopColors = [
+      ['#fef3c7', '#fbbf24'],
+      ['#cffafe', '#22d3ee'],
+      ['#fce7f3', '#f472b6'],
+      ['#ffedd5', '#fb923c'],
+    ];
+    for (let s = 0; s < shopCount; s++) {
+      const sx = Math.round(s * shopW + 8);
+      const sw = Math.round(shopW - 16);
+      const [glassCol, signCol] = shopColors[(s + seedBase) % shopColors.length];
+
+      // Biển hiệu ngang phát sáng trên đầu cửa tiệm
+      const signH = Math.round(shopH * 0.26);
+      albCtx.fillStyle = signCol;
+      albCtx.fillRect(sx, shopTop, sw, signH);
+      emiCtx.fillStyle = signCol;
+      emiCtx.fillRect(sx, shopTop, sw, signH);
+
+      // Kính trưng bày cửa hàng ấm áp bên dưới
+      const winY = shopTop + signH + 5;
+      const winH = Math.max(8, shopH - signH - 8);
+      albCtx.fillStyle = glassCol;
+      albCtx.fillRect(sx + 3, winY, sw - 6, winH);
+      emiCtx.fillStyle = glassCol;
+      emiCtx.globalAlpha = 0.92;
+      emiCtx.fillRect(sx + 3, winY, sw - 6, winH);
+      emiCtx.globalAlpha = 1.0;
+    }
+
+    const setup = (cv: HTMLCanvasElement) => {
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = THREE.RepeatWrapping;
+      t.wrapT = THREE.ClampToEdgeWrapping;
+      t.anisotropy = maxAnisotropy;
+      return t;
+    };
+
+    return {
+      map: setup(albCv),
+      emissiveMap: setup(emiCv),
+    };
+  };
+
+  const v0 = buildVariant('curtain_glass', 11);
+  const v1 = buildVariant('metro_apartment', 37);
+  const v2 = buildVariant('commercial_tower', 73);
+  const variants = [v0, v1, v2];
+
+  return {
+    map: v0.map,
+    emissiveMap: v0.emissiveMap,
+    variants,
+    dispose: () => {
+      for (const v of variants) {
+        v.map.dispose();
+        v.emissiveMap.dispose();
+      }
+    },
+  };
+}
+
+/**
+ * 9) Texture Nền Đô Thị & Vỉa Hè Đá Granite (thay thế hoàn toàn thảm cỏ xanh khi ở Map Thành Phố)
+ */
+export function createCityUrbanPavementTextures(THREE: any, maxAnisotropy: number) {
+  // 1) Gạch lát vỉa hè đô thị (Granite Sidewalk Slabs)
+  const swCv = document.createElement('canvas');
+  swCv.width = 512;
+  swCv.height = 512;
+  const swCtx = swCv.getContext('2d')!;
+  swCtx.fillStyle = '#334155';
+  swCtx.fillRect(0, 0, 512, 512);
+
+  const tiles = 8;
+  const step = 512 / tiles;
+  for (let r = 0; r < tiles; r++) {
+    for (let c = 0; c < tiles; c++) {
+      const shade = 44 + Math.floor(hash2D(c, r, 311) * 14);
+      swCtx.fillStyle = `rgb(${shade},${shade + 4},${shade + 11})`;
+      swCtx.fillRect(c * step + 2, r * step + 2, step - 4, step - 4);
+    }
   }
+  // Nắp cống gang đô thị dọc vỉa hè
+  swCtx.fillStyle = '#1e293b';
+  swCtx.beginPath();
+  swCtx.arc(256, 256, 36, 0, Math.PI * 2);
+  swCtx.fill();
+  swCtx.strokeStyle = '#475569';
+  swCtx.lineWidth = 3;
+  swCtx.stroke();
+
+  // 2) Nền nhựa / bê tông tối cho toàn khu ô bàn cờ đô thị (City Block Ground)
+  const plCv = document.createElement('canvas');
+  plCv.width = 512;
+  plCv.height = 512;
+  const plCtx = plCv.getContext('2d')!;
+  plCtx.fillStyle = '#0f141f';
+  plCtx.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 4500; i++) {
+    const v = 12 + Math.floor(Math.random() * 14);
+    plCtx.fillStyle = `rgb(${v},${v + 2},${v + 6})`;
+    plCtx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+  }
+  // Kẻ lưới đường nội bộ giữa các lô phố
+  plCtx.strokeStyle = 'rgba(51, 65, 85, 0.55)';
+  plCtx.lineWidth = 4;
+  plCtx.strokeRect(2, 2, 508, 508);
 
   const setup = (cv: HTMLCanvasElement) => {
     const t = new THREE.CanvasTexture(cv);
@@ -1582,17 +1831,18 @@ export function createCityBuildingFacadeTextures(THREE: any, maxAnisotropy: numb
     return t;
   };
 
-  const map = setup(albCv);
-  const emissiveMap = setup(emiCv);
+  const sidewalkMap = setup(swCv);
+  const plazaMap = setup(plCv);
 
   return {
-    map,
-    emissiveMap,
+    sidewalkMap,
+    plazaMap,
     dispose: () => {
-      map.dispose();
-      emissiveMap.dispose();
+      sidewalkMap.dispose();
+      plazaMap.dispose();
     },
   };
 }
+
 
 

@@ -24,6 +24,7 @@ import {
   create2KGrassPBR,
   createBallisticSparkSystem,
   createCityBuildingFacadeTextures,
+  createCityUrbanPavementTextures,
   createHeroPlasmaPointLightRig,
   createHologramDragonMaterial,
   createJaggedLightningGroup,
@@ -512,6 +513,28 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const asphaltPBR = create2KAsphaltPBR(THREE, maxAniso, 2048);
         const cityTarAsphaltPBR = create2KCityTarAsphaltPBR(THREE, maxAniso, 2048);
         const buildingFacadeTex = createCityBuildingFacadeTextures(THREE, maxAniso);
+        const cityPavementTex = createCityUrbanPavementTextures(THREE, maxAniso);
+
+        const cityPlazaGroundMat = new THREE.MeshPhysicalMaterial({
+          map: cityPavementTex.plazaMap,
+          normalMap: cityTarAsphaltPBR.normalMap,
+          normalScale: new THREE.Vector2(0.55, 0.55),
+          roughness: 0.72,
+          metalness: 0.15,
+          clearcoat: 0.35,
+          clearcoatRoughness: 0.28,
+          envMapIntensity: 1.15,
+        });
+        const citySidewalkMat = new THREE.MeshPhysicalMaterial({
+          map: cityPavementTex.sidewalkMap,
+          normalMap: asphaltPBR.normalMap,
+          normalScale: new THREE.Vector2(0.45, 0.45),
+          roughness: 0.48,
+          metalness: 0.12,
+          clearcoat: 0.52,
+          clearcoatRoughness: 0.22,
+          envMapIntensity: 1.35,
+        });
 
         const grassMat = new THREE.MeshPhysicalMaterial({
           map: grassPBR.map,
@@ -674,15 +697,30 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         });
 
         const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
-        const buildingBodyMat = new THREE.MeshPhysicalMaterial({
-          color: 0xffffff,
-          map: buildingFacadeTex.map,
-          emissive: 0xffffff,
-          emissiveMap: buildingFacadeTex.emissiveMap,
-          emissiveIntensity: 1.95,
-          roughness: 0.24,
-          metalness: 0.45,
-          clearcoat: 0.72,
+        const buildingFacadeMats = buildingFacadeTex.variants.map(
+          (v) =>
+            new THREE.MeshPhysicalMaterial({
+              color: 0xffffff,
+              map: v.map,
+              emissive: 0xffffff,
+              emissiveMap: v.emissiveMap,
+              emissiveIntensity: 1.85,
+              roughness: 0.22,
+              metalness: 0.48,
+              clearcoat: 0.75,
+              envMapIntensity: 1.3,
+            }),
+        );
+        const buildingBodyMat = buildingFacadeMats[0];
+        const buildingRoofMat = new THREE.MeshStandardMaterial({
+          color: 0x0f172a,
+          roughness: 0.85,
+          metalness: 0.25,
+        });
+        const buildingPenthouseMat = new THREE.MeshStandardMaterial({
+          color: 0x1e293b,
+          roughness: 0.68,
+          metalness: 0.42,
         });
         const matDarkMetal = new THREE.MeshPhysicalMaterial({
           color: 0x334155,
@@ -790,22 +828,28 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
         // Áp dụng màu đặc trưng của lề đường và mặt đường nhựa dầu đô thị (khi vào map Thành Phố Về Đêm)
         const applyMapTheme = (th: MapTheme) => {
+          const isCity = th.sceneryType === 'city';
+          const cA = isCity ? 0x334155 : th.curbColorA;
+          const cB = isCity ? 0xcbd5e1 : th.curbColorB;
           if (curbMat.map) curbMat.map.dispose();
-          curbMat.map = makeCurbTexture(th.curbColorA, th.curbColorB);
+          curbMat.map = makeCurbTexture(cA, cB);
           curbMat.needsUpdate = true;
-          barrierRed.color.setHex(th.curbColorA);
-          barrierWhite.color.setHex(th.curbColorB);
+          barrierRed.color.setHex(isCity ? 0x1e293b : th.curbColorA);
+          barrierWhite.color.setHex(isCity ? 0x94a3b8 : th.curbColorB);
           leafMatA.color.setHex(th.leafA);
           leafMatB.color.setHex(th.leafB);
 
-          const isCity = th.sceneryType === 'city';
           const roadSet = isCity ? cityTarAsphaltPBR : asphaltPBR;
           roadMat.map = roadSet.map;
           roadMat.normalMap = roadSet.normalMap;
+          roadMat.normalScale.set(isCity ? 1.75 : 1.18, isCity ? 1.75 : 1.18);
           roadMat.roughnessMap = roadSet.roughnessMap;
-          roadMat.clearcoat = isCity ? 0.72 : 0.22;
-          roadMat.clearcoatRoughness = isCity ? 0.14 : 0.38;
-          roadMat.envMapIntensity = isCity ? 1.65 : 1.18;
+          roadMat.roughness = isCity ? 0.68 : 1.0;
+          roadMat.metalness = isCity ? 0.26 : 0.06;
+          roadMat.clearcoat = isCity ? 0.96 : 0.22;
+          roadMat.clearcoatRoughness = isCity ? 0.075 : 0.38;
+          roadMat.reflectivity = isCity ? 1.0 : 0.5;
+          roadMat.envMapIntensity = isCity ? 2.45 : 1.18;
           roadMat.needsUpdate = true;
         };
 
@@ -907,30 +951,55 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             if (r >= 9) lakeR = r;
           }
 
-          // Địa hình lưới Tam Giác (Triangle Topology Terrain) có đồi tự nhiên bao quanh + Texture 2K PBR
+          // Nền địa hình: Ở Map Thành Phố dùng nền Nhựa/Bê Tông Đô Thị phẳng + Vỉa Hè Đá Granite (TUYỆT ĐỐI KHÔNG dùng thảm cỏ xanh đồi núi!)
           const grassSize = ext + 520;
-          const repeatCnt = grassSize / 16;
-          grassPBR.map.repeat.set(repeatCnt, repeatCnt);
-          grassPBR.normalMap.repeat.set(repeatCnt, repeatCnt);
-          grassPBR.roughnessMap.repeat.set(repeatCnt, repeatCnt);
-          const terrainGeo = buildTriangulatedTerrain(
-            THREE,
-            grassSize,
-            cx,
-            cz,
-            CIRCUIT_TRACK.samples,
-            halfW,
-            lakeX,
-            lakeZ,
-            lakeR,
-            podiumCenterVec.x,
-            podiumCenterVec.z,
-            quality === 'low' ? 48 : 96,
-          );
-          const grass = new THREE.Mesh(terrainGeo, grassMat);
-          grass.position.set(cx, 0, cz);
-          grass.receiveShadow = enableWorldShadows;
-          trackRoot.add(grass);
+          if (scenery === 'city') {
+            const plazaRep = grassSize / 24;
+            cityPavementTex.plazaMap.repeat.set(plazaRep, plazaRep);
+            const cityGroundGeo = new THREE.PlaneGeometry(grassSize, grassSize, 2, 2);
+            cityGroundGeo.rotateX(-Math.PI / 2);
+            const cityGround = new THREE.Mesh(cityGroundGeo, cityPlazaGroundMat);
+            cityGround.position.set(cx, -0.04, cz);
+            cityGround.receiveShadow = enableWorldShadows;
+            trackRoot.add(cityGround);
+
+            // Vỉa hè lát đá Granite rộng 6.8m chạy dọc hai bên đại lộ đô thị
+            cityPavementTex.sidewalkMap.repeat.set(1.6, Math.max(24, Math.round(total / 8.5)));
+            const sidewalkL = new THREE.Mesh(
+              buildTriangulatedRibbon(THREE, sampleCircuit, total, -halfW - 8.2, -halfW - 1.4, 0.14, 0.0, 2, 1.0),
+              citySidewalkMat,
+            );
+            const sidewalkR = new THREE.Mesh(
+              buildTriangulatedRibbon(THREE, sampleCircuit, total, halfW + 1.4, halfW + 8.2, 0.14, 0.0, 2, 1.0),
+              citySidewalkMat,
+            );
+            sidewalkL.receiveShadow = enableWorldShadows;
+            sidewalkR.receiveShadow = enableWorldShadows;
+            trackRoot.add(sidewalkL, sidewalkR);
+          } else {
+            const repeatCnt = grassSize / 16;
+            grassPBR.map.repeat.set(repeatCnt, repeatCnt);
+            grassPBR.normalMap.repeat.set(repeatCnt, repeatCnt);
+            grassPBR.roughnessMap.repeat.set(repeatCnt, repeatCnt);
+            const terrainGeo = buildTriangulatedTerrain(
+              THREE,
+              grassSize,
+              cx,
+              cz,
+              CIRCUIT_TRACK.samples,
+              halfW,
+              lakeX,
+              lakeZ,
+              lakeR,
+              podiumCenterVec.x,
+              podiumCenterVec.z,
+              quality === 'low' ? 48 : 96,
+            );
+            const grass = new THREE.Mesh(terrainGeo, grassMat);
+            grass.position.set(cx, 0, cz);
+            grass.receiveShadow = enableWorldShadows;
+            trackRoot.add(grass);
+          }
 
           // Mặt đường nhựa 2K PBR & lề đường theo lưới Tam Giác mịn (widthSegs = 8, có độ vồng mặt đường tự nhiên)
           const roadMesh = new THREE.Mesh(
@@ -1039,101 +1108,102 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             return true;
           };
 
-          // 1) Cây xanh tự nhiên chi tiết nhiều tầng tán lá + Bụi cây & Cụm cỏ 3D ven đường (tùy chỉnh theo cấu hình Thấp/Trung bình/Cao)
-          const treeScaleFactor = quality === 'high' ? 1.25 : quality === 'low' ? 0.65 : 1.0;
-          const treeMax = Math.max(24, Math.round(map.theme.treeCount * treeScaleFactor));
-          const treePositions: Array<{ x: number; z: number; s: number; rot: number }> = [];
-          const attempts = treeMax * 4;
-          const spreadR = ext * 0.72 + 70;
-          for (let i = 0; i < attempts && treePositions.length < treeMax; i++) {
-            const angle = i * 2.39996;
-            const radius = Math.sqrt((i + 0.5) / attempts) * spreadR;
-            const tx = cx + Math.cos(angle) * radius;
-            const tz = cz + Math.sin(angle) * radius;
-            if (isSafeScenerySpot(tx, tz, halfW + 7.2)) {
-              treePositions.push({ x: tx, z: tz, s: 0.85 + (i % 6) * 0.16, rot: (i % 7) * 0.55 });
+          // 1) Cây xanh tự nhiên chi tiết (chỉ dựng cho Công Viên / Sân Vận Động / Đèo Núi — KHÔNG trồng rừng hỗn độn trong Thành Phố)
+          if (scenery !== 'city') {
+            const treeScaleFactor = quality === 'high' ? 1.25 : quality === 'low' ? 0.65 : 1.0;
+            const treeMax = Math.max(24, Math.round(map.theme.treeCount * treeScaleFactor));
+            const treePositions: Array<{ x: number; z: number; s: number; rot: number }> = [];
+            const attempts = treeMax * 4;
+            const spreadR = ext * 0.72 + 70;
+            for (let i = 0; i < attempts && treePositions.length < treeMax; i++) {
+              const angle = i * 2.39996;
+              const radius = Math.sqrt((i + 0.5) / attempts) * spreadR;
+              const tx = cx + Math.cos(angle) * radius;
+              const tz = cz + Math.sin(angle) * radius;
+              if (isSafeScenerySpot(tx, tz, halfW + 7.2)) {
+                treePositions.push({ x: tx, z: tz, s: 0.85 + (i % 6) * 0.16, rot: (i % 7) * 0.55 });
+              }
             }
-          }
-          const tCount = Math.max(1, treePositions.length);
-          const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, tCount);
-          const leafBotInst = new THREE.InstancedMesh(
-            scenery === 'mountain' ? pineConeBotGeo : leafBotGeo,
-            leafMatA,
-            tCount,
-          );
-          const leafTopInst = new THREE.InstancedMesh(
-            scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
-            leafMatB,
-            tCount,
-          );
-          // Trên mức Trung bình & Cao: thêm tầng tán lá phụ thứ 3 tạo dáng cây xum xuê chân thực như ảnh tham chiếu
-          const leafSideInst =
-            quality !== 'low'
-              ? new THREE.InstancedMesh(
-                scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
-                leafMatC,
-                tCount * 2,
-              )
-              : null;
-
-          if (enableWorldShadows) {
-            trunkInst.castShadow = true;
-            trunkInst.receiveShadow = true;
-            leafBotInst.castShadow = true;
-            leafBotInst.receiveShadow = true;
-            leafTopInst.castShadow = true;
-            leafTopInst.receiveShadow = true;
-            if (leafSideInst) {
-              leafSideInst.castShadow = true;
-              leafSideInst.receiveShadow = true;
-            }
-          }
-
-          treePositions.forEach((tp, idx) => {
-            dummy.rotation.set(0, tp.rot, 0);
-            dummy.scale.setScalar(tp.s);
-            dummy.position.set(tp.x, 1.95 * tp.s, tp.z);
-            dummy.updateMatrix();
-            trunkInst.setMatrixAt(idx, dummy.matrix);
-
-            dummy.position.set(tp.x, (scenery === 'mountain' ? 4.4 : 4.55) * tp.s, tp.z);
-            dummy.scale.set(tp.s * 1.12, tp.s * 0.96, tp.s * 1.12);
-            dummy.updateMatrix();
-            leafBotInst.setMatrixAt(idx, dummy.matrix);
-
-            dummy.position.set(
-              tp.x + Math.cos(tp.rot) * 0.45 * tp.s,
-              (scenery === 'mountain' ? 6.6 : 6.1) * tp.s,
-              tp.z + Math.sin(tp.rot) * 0.45 * tp.s,
+            const tCount = Math.max(1, treePositions.length);
+            const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, tCount);
+            const leafBotInst = new THREE.InstancedMesh(
+              scenery === 'mountain' ? pineConeBotGeo : leafBotGeo,
+              leafMatA,
+              tCount,
             );
-            dummy.scale.setScalar(tp.s * 0.95);
-            dummy.updateMatrix();
-            leafTopInst.setMatrixAt(idx, dummy.matrix);
+            const leafTopInst = new THREE.InstancedMesh(
+              scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
+              leafMatB,
+              tCount,
+            );
+            const leafSideInst =
+              quality !== 'low'
+                ? new THREE.InstancedMesh(
+                  scenery === 'mountain' ? pineConeTopGeo : leafTopGeo,
+                  leafMatC,
+                  tCount * 2,
+                )
+                : null;
 
-            if (leafSideInst) {
-              const a1 = tp.rot + 1.1;
-              const a2 = tp.rot + 3.8;
-              dummy.position.set(
-                tp.x + Math.cos(a1) * 1.35 * tp.s,
-                (scenery === 'mountain' ? 3.2 : 4.15) * tp.s,
-                tp.z + Math.sin(a1) * 1.35 * tp.s,
-              );
-              dummy.scale.setScalar(tp.s * 0.78);
-              dummy.updateMatrix();
-              leafSideInst.setMatrixAt(idx * 2, dummy.matrix);
-
-              dummy.position.set(
-                tp.x + Math.cos(a2) * 1.25 * tp.s,
-                (scenery === 'mountain' ? 5.2 : 4.85) * tp.s,
-                tp.z + Math.sin(a2) * 1.25 * tp.s,
-              );
-              dummy.scale.setScalar(tp.s * 0.72);
-              dummy.updateMatrix();
-              leafSideInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+            if (enableWorldShadows) {
+              trunkInst.castShadow = true;
+              trunkInst.receiveShadow = true;
+              leafBotInst.castShadow = true;
+              leafBotInst.receiveShadow = true;
+              leafTopInst.castShadow = true;
+              leafTopInst.receiveShadow = true;
+              if (leafSideInst) {
+                leafSideInst.castShadow = true;
+                leafSideInst.receiveShadow = true;
+              }
             }
-          });
-          trackRoot.add(trunkInst, leafBotInst, leafTopInst);
-          if (leafSideInst) trackRoot.add(leafSideInst);
+
+            treePositions.forEach((tp, idx) => {
+              dummy.rotation.set(0, tp.rot, 0);
+              dummy.scale.setScalar(tp.s);
+              dummy.position.set(tp.x, 1.95 * tp.s, tp.z);
+              dummy.updateMatrix();
+              trunkInst.setMatrixAt(idx, dummy.matrix);
+
+              dummy.position.set(tp.x, (scenery === 'mountain' ? 4.4 : 4.55) * tp.s, tp.z);
+              dummy.scale.set(tp.s * 1.12, tp.s * 0.96, tp.s * 1.12);
+              dummy.updateMatrix();
+              leafBotInst.setMatrixAt(idx, dummy.matrix);
+
+              dummy.position.set(
+                tp.x + Math.cos(tp.rot) * 0.45 * tp.s,
+                (scenery === 'mountain' ? 6.6 : 6.1) * tp.s,
+                tp.z + Math.sin(tp.rot) * 0.45 * tp.s,
+              );
+              dummy.scale.setScalar(tp.s * 0.95);
+              dummy.updateMatrix();
+              leafTopInst.setMatrixAt(idx, dummy.matrix);
+
+              if (leafSideInst) {
+                const a1 = tp.rot + 1.1;
+                const a2 = tp.rot + 3.8;
+                dummy.position.set(
+                  tp.x + Math.cos(a1) * 1.35 * tp.s,
+                  (scenery === 'mountain' ? 3.2 : 4.15) * tp.s,
+                  tp.z + Math.sin(a1) * 1.35 * tp.s,
+                );
+                dummy.scale.setScalar(tp.s * 0.78);
+                dummy.updateMatrix();
+                leafSideInst.setMatrixAt(idx * 2, dummy.matrix);
+
+                dummy.position.set(
+                  tp.x + Math.cos(a2) * 1.25 * tp.s,
+                  (scenery === 'mountain' ? 5.2 : 4.85) * tp.s,
+                  tp.z + Math.sin(a2) * 1.25 * tp.s,
+                );
+                dummy.scale.setScalar(tp.s * 0.72);
+                dummy.updateMatrix();
+                leafSideInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+              }
+            });
+            trackRoot.add(trunkInst, leafBotInst, leafTopInst);
+            if (leafSideInst) trackRoot.add(leafSideInst);
+          }
 
           // 1B) Bụi cây & Cụm cỏ 3D chi tiết ven 2 bên lề đường (chỉ dựng ở mức Trung bình & Cao để tối ưu FPS)
           if (quality !== 'low' && scenery !== 'city') {
@@ -1315,66 +1385,312 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               trackRoot.add(boulderInst);
             }
           } else if (scenery === 'city') {
-            // 65 Tòa nhà chọc trời Cyberpunk có dải đèn Neon + Cột đèn đường Neon dọc lộ
-            const bldgPos: Array<{ x: number; z: number; w: number; d: number; h: number; c: number }> = [];
-            for (let b = 0; b < 180 && bldgPos.length < 65; b++) {
-              const ang = b * 2.39996 + 0.3;
-              const rad = ext * 0.18 + (b % 9) * 24;
-              const bx = cx + Math.cos(ang) * rad;
-              const bz = cz + Math.sin(ang) * rad;
-              if (!isSafeScenerySpot(bx, bz, halfW + 13)) continue;
-              bldgPos.push({
-                x: bx,
-                z: bz,
-                w: 8 + (b % 4) * 2.5,
-                d: 8 + ((b + 2) % 4) * 2.5,
-                h: 16 + (b % 7) * 5.2,
-                c: b % 3,
-              });
+            // QUY HOẠCH ĐẠI LỘ & LÔ PHỐ Ô BÀN CỜ CHUẨN ĐÔ THỊ (tham khảo threejs.org/examples/webgpu_lights_clustered_city.html):
+            // 1) Dãy nhà mặt tiền phố (Street-Wall Frontage) xếp thẳng hàng dọc 2 bên vỉa hè, chừa ngã tư đường ngang đều đặn.
+            // 2) Các lô phố ô bàn cờ (Orthogonal City Blocks) phía sau và ở lõi trung tâm, tuyệt đối không xoay nghiêng lộn xộn hay chồng chéo!
+            // 3) Biển hiệu hộp đèn dọc + Mái hiên cửa hiệu tầng trệt đa sắc chiếu phản quang lên mặt đường nhựa dầu bóng ướt.
+            interface CityBuildingItem {
+              x: number;
+              z: number;
+              w: number;
+              d: number;
+              h: number;
+              yaw: number;
+              variant: number;
+              neonIdx: number;
+              streetFront?: {
+                inwardX: number;
+                inwardZ: number;
+                tangentYaw: number;
+              };
             }
-            if (bldgPos.length > 0) {
-              const bBodyInst = new THREE.InstancedMesh(buildingGeo, buildingBodyMat, bldgPos.length);
-              const bNeonInstA = new THREE.InstancedMesh(buildingGeo, neonCyanMat, bldgPos.length);
-              const bNeonInstB = new THREE.InstancedMesh(buildingGeo, neonPinkMat, bldgPos.length);
-              bldgPos.forEach((bp, idx) => {
-                dummy.rotation.set(0, 0, 0);
-                dummy.position.set(bp.x, bp.h / 2, bp.z);
-                dummy.scale.set(bp.w, bp.h, bp.d);
-                dummy.updateMatrix();
-                bBodyInst.setMatrixAt(idx, dummy.matrix);
 
-                // Dải viền đèn Neon trên nóc & thân tòa nhà
-                dummy.position.set(bp.x, bp.h * 0.92, bp.z);
-                dummy.scale.set(bp.w + 0.35, 0.9, bp.d + 0.35);
-                dummy.updateMatrix();
-                if (bp.c === 0) bNeonInstA.setMatrixAt(idx, dummy.matrix);
-                else bNeonInstB.setMatrixAt(idx, dummy.matrix);
-
-                if (bp.c === 0) {
-                  dummy.scale.set(0, 0, 0);
-                  dummy.updateMatrix();
-                  bNeonInstB.setMatrixAt(idx, dummy.matrix);
-                } else {
-                  dummy.scale.set(0, 0, 0);
-                  dummy.updateMatrix();
-                  bNeonInstA.setMatrixAt(idx, dummy.matrix);
-                }
-              });
-              if (enableWorldShadows) {
-                bBodyInst.castShadow = true;
-                bBodyInst.receiveShadow = true;
+            const cityBuildings: CityBuildingItem[] = [];
+            const canPlaceCityBuilding = (
+              bx: number,
+              bz: number,
+              bw: number,
+              bd: number,
+              minAlleyGap: number,
+            ) => {
+              const rad = 0.5 * Math.hypot(bw, bd);
+              const reqTrackDist = halfW + 8.3 + rad * 0.92;
+              for (let sIdx = 0; sIdx < CIRCUIT_TRACK.samples.length; sIdx += 2) {
+                const p = CIRCUIT_TRACK.samples[sIdx];
+                if (Math.hypot(bx - p.x, bz - p.z) < reqTrackDist) return false;
               }
-              trackRoot.add(bBodyInst, bNeonInstA, bNeonInstB);
+              if (Math.hypot(bx - podiumCenterVec.x, bz - podiumCenterVec.z) < 16.5 + rad) {
+                return false;
+              }
+              for (let k = 0; k < cityBuildings.length; k++) {
+                const ob = cityBuildings[k];
+                const dx = Math.abs(bx - ob.x);
+                const dz = Math.abs(bz - ob.z);
+                // Kiểm tra hộp bao vuông góc (AABB) kèm khoảng hở ngõ phố gọn gàng
+                const halfSumX = (bw + ob.w) * 0.5 + minAlleyGap;
+                const halfSumZ = (bd + ob.d) * 0.5 + minAlleyGap;
+                if (dx < halfSumX && dz < halfSumZ) return false;
+              }
+              return true;
+            };
+
+            // Lớp 1: Dãy nhà mặt tiền đại lộ (Streetfront Avenue Row) thẳng tắp hai bên vỉa hè
+            const frontageStep = 18.2;
+            const frontageSlots = Math.floor(total / frontageStep);
+            for (let slot = 0; slot < frontageSlots; slot++) {
+              // Cứ mỗi 5 lô chừa 1 ngã tư đường nhánh vuông góc thoáng đẹp
+              if (slot % 5 === 0) continue;
+              const isCornerLandmark = slot % 5 === 1 || slot % 5 === 4;
+              const dist = (slot + 0.5) * frontageStep;
+
+              for (const side of [-1, 1] as const) {
+                const s = sampleCircuit(dist, side * (halfW + 16.4));
+                // Khóa góc xoay về lưới trục đô thị vuông góc (0, 90, 180, 270 độ) để các tòa nhà luôn song song & vuông vức!
+                const snappedQuarter = Math.round(s.yaw / (Math.PI / 2));
+                const gridYaw = snappedQuarter * (Math.PI / 2);
+                const isEastWest = Math.abs(snappedQuarter) % 2 === 1;
+
+                const widthAlongStreet = 14.2 + ((slot + (side > 0 ? 1 : 0)) % 3) * 1.1;
+                const depthFromStreet = 13.0 + (slot % 2) * 1.4;
+                const worldW = isEastWest ? depthFromStreet : widthAlongStreet;
+                const worldD = isEastWest ? widthAlongStreet : depthFromStreet;
+
+                const hBase = isCornerLandmark
+                  ? 34 + ((slot * 5 + (side > 0 ? 3 : 0)) % 4) * 5.5
+                  : 19 + ((slot * 3 + (side > 0 ? 2 : 0)) % 5) * 4.2;
+
+                if (!canPlaceCityBuilding(s.x, s.z, worldW, worldD, 1.8)) continue;
+
+                // Hướng mặt tiền quay thẳng từ tòa nhà vào lòng đường đua
+                const roadCenter = sampleCircuit(dist, 0);
+                const toRoadX = roadCenter.x - s.x;
+                const toRoadZ = roadCenter.z - s.z;
+                const toRoadLen = Math.hypot(toRoadX, toRoadZ) || 1;
+
+                cityBuildings.push({
+                  x: s.x,
+                  z: s.z,
+                  w: worldW,
+                  d: worldD,
+                  h: hBase,
+                  yaw: gridYaw,
+                  variant: (slot + (side > 0 ? 1 : 2)) % 3,
+                  neonIdx: (slot * 2 + (side > 0 ? 1 : 0)) % 5,
+                  streetFront: {
+                    inwardX: toRoadX / toRoadLen,
+                    inwardZ: toRoadZ / toRoadLen,
+                    tangentYaw: s.yaw,
+                  },
+                });
+              }
             }
 
-            // Cột đèn đường Đô Thị quay VÀO TRONG mặt đường + Ánh đèn lan tỏa dịu rộng (KHÔNG dùng chùm nón gắt tập trung)
-            const lampWashGeo = new THREE.PlaneGeometry(21, 26);
+            // Lớp 2: Quy hoạch Lô Phố Ô Bàn Cờ (Orthogonal City Blocks) ở lõi trung tâm & hậu cảnh đại lộ
+            const gridStep = 25.0;
+            const gxStart = Math.floor((CIRCUIT_TRACK.minX - 105) / gridStep);
+            const gxEnd = Math.ceil((CIRCUIT_TRACK.maxX + 105) / gridStep);
+            const gzStart = Math.floor((CIRCUIT_TRACK.minZ - 105) / gridStep);
+            const gzEnd = Math.ceil((CIRCUIT_TRACK.maxZ + 105) / gridStep);
+            const maxBuildings = quality === 'low' ? 95 : quality === 'high' ? 175 : 140;
+
+            for (let gi = gxStart; gi <= gxEnd && cityBuildings.length < maxBuildings; gi++) {
+              // Cứ mỗi 4 ô chừa 1 tuyến phố ngang rộng rãi
+              if (((gi % 4) + 4) % 4 === 0) continue;
+              for (let gj = gzStart; gj <= gzEnd && cityBuildings.length < maxBuildings; gj++) {
+                if (((gj % 4) + 4) % 4 === 0) continue;
+                const bx = gi * gridStep;
+                const bz = gj * gridStep;
+                const distFromDowntown = Math.hypot(bx - cx, bz - cz);
+                if (distFromDowntown > ext * 0.78 + 95) continue;
+
+                const hashIdx = Math.abs(gi * 31 + gj * 17);
+                const bw = 15.5 + (hashIdx % 3) * 1.8;
+                const bd = 15.5 + ((hashIdx >> 2) % 3) * 1.8;
+                // Cao ốc trung tâm vươn cao uy nghi, giảm dần tự nhiên ra vùng ven
+                const downtownFactor = Math.max(0, 1 - distFromDowntown / (ext * 0.7 + 90));
+                const bh = 22 + (hashIdx % 6) * 5.8 + downtownFactor * 18;
+
+                if (!canPlaceCityBuilding(bx, bz, bw, bd, 3.2)) continue;
+                cityBuildings.push({
+                  x: bx,
+                  z: bz,
+                  w: bw,
+                  d: bd,
+                  h: bh,
+                  yaw: 0,
+                  variant: hashIdx % 3,
+                  neonIdx: hashIdx % 5,
+                });
+              }
+            }
+
+            if (cityBuildings.length > 0) {
+              // Tách theo 3 phong cách kiến trúc mặt tiền + Nóc bê tông tối (không bị dính cửa sổ lên sân thượng!) + Tầng thượng giật cấp
+              const byVariant: CityBuildingItem[][] = [[], [], []];
+              cityBuildings.forEach((b) => byVariant[b.variant % 3].push(b));
+
+              byVariant.forEach((group, vIdx) => {
+                if (group.length === 0) return;
+                const bodyInst = new THREE.InstancedMesh(
+                  buildingGeo,
+                  buildingFacadeMats[vIdx],
+                  group.length,
+                );
+                group.forEach((bp, i) => {
+                  dummy.rotation.set(0, 0, 0);
+                  dummy.position.set(bp.x, bp.h / 2, bp.z);
+                  dummy.scale.set(bp.w, bp.h, bp.d);
+                  dummy.updateMatrix();
+                  bodyInst.setMatrixAt(i, dummy.matrix);
+                });
+                if (enableWorldShadows) {
+                  bodyInst.castShadow = true;
+                  bodyInst.receiveShadow = true;
+                }
+                trackRoot.add(bodyInst);
+              });
+
+              // Nóc gờ bê tông tối (che kín đỉnh khối nhà) + Khối kỹ thuật Penthouse sân thượng
+              const roofCapInst = new THREE.InstancedMesh(
+                buildingGeo,
+                buildingRoofMat,
+                cityBuildings.length,
+              );
+              const penthouseInst = new THREE.InstancedMesh(
+                buildingGeo,
+                buildingPenthouseMat,
+                cityBuildings.length,
+              );
+              const beaconMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
+              const tallTowers = cityBuildings.filter((b) => b.h >= 36);
+              const spireInst =
+                tallTowers.length > 0
+                  ? new THREE.InstancedMesh(streetPostGeo, matDarkMetal, tallTowers.length)
+                  : null;
+              const beaconInst =
+                tallTowers.length > 0
+                  ? new THREE.InstancedMesh(
+                      new THREE.SphereGeometry(0.32, 8, 8),
+                      beaconMat,
+                      tallTowers.length,
+                    )
+                  : null;
+
+              cityBuildings.forEach((bp, idx) => {
+                dummy.rotation.set(0, 0, 0);
+                dummy.position.set(bp.x, bp.h + 0.36, bp.z);
+                dummy.scale.set(bp.w + 0.32, 0.72, bp.d + 0.32);
+                dummy.updateMatrix();
+                roofCapInst.setMatrixAt(idx, dummy.matrix);
+
+                const phH = 2.4 + (idx % 3) * 0.9;
+                dummy.position.set(bp.x, bp.h + 0.72 + phH / 2, bp.z);
+                dummy.scale.set(bp.w * 0.52, phH, bp.d * 0.52);
+                dummy.updateMatrix();
+                penthouseInst.setMatrixAt(idx, dummy.matrix);
+              });
+
+              if (spireInst && beaconInst) {
+                tallTowers.forEach((bp, idx) => {
+                  const topY = bp.h + 3.2;
+                  dummy.rotation.set(0, 0, 0);
+                  dummy.position.set(bp.x, topY + 2.8, bp.z);
+                  dummy.scale.set(0.38, 0.85, 0.38);
+                  dummy.updateMatrix();
+                  spireInst.setMatrixAt(idx, dummy.matrix);
+
+                  dummy.position.set(bp.x, topY + 6.0, bp.z);
+                  dummy.scale.setScalar(1);
+                  dummy.updateMatrix();
+                  beaconInst.setMatrixAt(idx, dummy.matrix);
+                });
+                trackRoot.add(spireInst, beaconInst);
+              }
+              trackRoot.add(roofCapInst, penthouseInst);
+
+              // Hệ thống Biển Hiệu Cửa Hàng Dọc + Mái Hiên Sáng & Quầng Sáng Đa Sắc Tràn Ra Đường Nhựa Dầu (chuẩn webgpu_lights_clustered_city)
+              const streetFronts = cityBuildings.filter((b) => Boolean(b.streetFront));
+              const clusteredPalette = [0xffb74d, 0x22d3ee, 0xfb7185, 0xa855f7, 0x34d399];
+              const signMats = clusteredPalette.map(
+                (hex) => new THREE.MeshBasicMaterial({ color: hex }),
+              );
+              const spillGeo = new THREE.PlaneGeometry(15.5, 13.5);
+              spillGeo.rotateX(-Math.PI / 2);
+              const spillMats = clusteredPalette.map(
+                (hex) =>
+                  new THREE.MeshBasicMaterial({
+                    map: softLampGlowTex,
+                    color: hex,
+                    transparent: true,
+                    opacity: 0.22,
+                    depthWrite: false,
+                    blending: THREE.AdditiveBlending,
+                  }),
+              );
+
+              clusteredPalette.forEach((_, cIdx) => {
+                const subset = streetFronts.filter((b) => b.neonIdx === cIdx);
+                if (subset.length === 0) return;
+
+                // 1) Biển hiệu hộp đèn dọc (Vertical Blade Sign) gắn mặt tiền nhô ra vỉa hè
+                const bladeInst = new THREE.InstancedMesh(
+                  buildingGeo,
+                  signMats[cIdx],
+                  subset.length,
+                );
+                // 2) Dải hộp đèn mái hiên cửa hàng tầng 1 (Storefront Canopy Fascia)
+                const canopyInst = new THREE.InstancedMesh(
+                  buildingGeo,
+                  signMats[cIdx],
+                  subset.length,
+                );
+                // 3) Thảm ánh sáng màu lan tỏa từ cửa tiệm ra vỉa hè & mép đường nhựa dầu
+                const spillInst = new THREE.InstancedMesh(
+                  spillGeo,
+                  spillMats[cIdx],
+                  subset.length,
+                );
+
+                subset.forEach((bp, i) => {
+                  const sf = bp.streetFront!;
+                  const faceDist =
+                    Math.abs(sf.inwardX) > Math.abs(sf.inwardZ) ? bp.w * 0.5 : bp.d * 0.5;
+                  const fx = bp.x + sf.inwardX * (faceDist + 0.55);
+                  const fz = bp.z + sf.inwardZ * (faceDist + 0.55);
+
+                  dummy.rotation.set(0, sf.tangentYaw, 0);
+                  dummy.position.set(fx, 8.2 + (i % 3) * 1.4, fz);
+                  dummy.scale.set(0.95, 5.2, 0.32);
+                  dummy.updateMatrix();
+                  bladeInst.setMatrixAt(i, dummy.matrix);
+
+                  const cxPos = bp.x + sf.inwardX * (faceDist + 0.22);
+                  const czPos = bp.z + sf.inwardZ * (faceDist + 0.22);
+                  dummy.position.set(cxPos, 3.65, czPos);
+                  dummy.scale.set(0.45, 0.55, 9.8);
+                  dummy.updateMatrix();
+                  canopyInst.setMatrixAt(i, dummy.matrix);
+
+                  const sxPos = bp.x + sf.inwardX * (faceDist + 5.8);
+                  const szPos = bp.z + sf.inwardZ * (faceDist + 5.8);
+                  dummy.position.set(sxPos, 0.16, szPos);
+                  dummy.scale.set(1, 1, 1);
+                  dummy.updateMatrix();
+                  spillInst.setMatrixAt(i, dummy.matrix);
+                });
+
+                trackRoot.add(bladeInst, canopyInst, spillInst);
+              });
+            }
+
+            // Cột đèn đường Đô Thị quay VÀO TRONG mặt đường + 14 PointLight PBR rải đều giúp mặt đường nhựa dầu bóng loáng toàn tuyến!
+            const lampWashGeo = new THREE.PlaneGeometry(22, 28);
             lampWashGeo.rotateX(-Math.PI / 2);
             const lampHaloWarmMat = new THREE.SpriteMaterial({
               map: softLampGlowTex,
               color: 0xfef3c7,
               transparent: true,
-              opacity: 0.56,
+              opacity: 0.54,
               depthWrite: false,
               blending: THREE.AdditiveBlending,
             });
@@ -1382,7 +1698,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               map: softLampGlowTex,
               color: 0x7dd3fc,
               transparent: true,
-              opacity: 0.48,
+              opacity: 0.46,
               depthWrite: false,
               blending: THREE.AdditiveBlending,
             });
@@ -1390,7 +1706,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               map: softLampGlowTex,
               color: 0xfde68a,
               transparent: true,
-              opacity: 0.25,
+              opacity: 0.24,
               depthWrite: false,
               blending: THREE.AdditiveBlending,
             });
@@ -1398,35 +1714,35 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               map: softLampGlowTex,
               color: 0x38bdf8,
               transparent: true,
-              opacity: 0.2,
+              opacity: 0.19,
               depthWrite: false,
               blending: THREE.AdditiveBlending,
             });
             const lampBulbWarmMat = new THREE.MeshBasicMaterial({ color: 0xfffbeb });
+            const streetLightColors = [0xffdca8, 0x38bdf8, 0xffdca8, 0xfb7185, 0xffdca8, 0xa855f7];
 
-            for (let sl = 0; sl < 26; sl++) {
+            const cityLampCount = 28;
+            for (let sl = 0; sl < cityLampCount; sl++) {
               const side = sl % 2 === 0 ? -1 : 1;
-              const s = sampleCircuit((sl / 26) * total, side * (halfW + 3.2));
+              const s = sampleCircuit((sl / cityLampCount) * total, side * (halfW + 2.8));
               const lg = new THREE.Group();
               const post = new THREE.Mesh(streetPostGeo, matDarkMetal);
-              post.position.y = 3.6;
+              post.position.set(0, 3.6, 0);
               if (enableWorldShadows) post.castShadow = true;
-              // Trong hệ trục yaw = atan2(ntx, ntz), hướng +side * X vươn thẳng VÀO TÂM ĐƯỜNG ĐUA
+              // Hướng +side * X vươn thẳng VÀO TÂM ĐƯỜNG ĐUA
               const arm = new THREE.Mesh(streetArmGeo, matDarkMetal);
               arm.position.set(side * 1.12, 7.1, 0);
-              const isWarm = sl % 4 !== 3;
+              const isWarm = sl % 4 !== 1;
               const lamp = new THREE.Mesh(
                 streetLampGeo,
                 isWarm ? lampBulbWarmMat : neonCyanMat,
               );
               lamp.position.set(side * 2.15, 6.94, 0);
 
-              // Quầng hào quang khuếch tán mềm mại trong không trung quanh bóng đèn
               const halo = new THREE.Sprite(isWarm ? lampHaloWarmMat : lampHaloCyanMat);
               halo.position.set(side * 2.15, 6.82, 0);
-              halo.scale.set(9.4, 9.4, 1);
+              halo.scale.set(9.2, 9.2, 1);
 
-              // Ánh đèn lan tỏa dịu rộng phủ đều mặt đường nhựa dầu (không tạo vòng rọi gắt)
               const washMesh = new THREE.Mesh(
                 lampWashGeo,
                 isWarm ? lampWashWarmMat : lampWashCyanMat,
@@ -1434,10 +1750,15 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               washMesh.position.set(side * 5.2, 0.052, 0);
 
               lg.add(post, arm, lamp, halo, washMesh);
-              if (sl % 4 === 0) {
-                // PointLight bán kính lớn (48m) và suy hao thấp (decay 0.8) để ánh sáng lan tỏa đều khắp mặt đường & tòa nhà
-                const pt = new THREE.PointLight(isWarm ? 0xfef3c7 : 0x7dd3fc, 3.4, 48, 0.8);
-                pt.position.set(side * 3.2, 6.75, 0);
+              // Bật 14 nguồn PointLight thực dọc khắp vòng đua để hạt đá dăm & vệt dầu trên mặt nhựa phản quang sống động!
+              if (sl % 2 === 0 && quality !== 'low') {
+                const ptCol = streetLightColors[(sl >> 1) % streetLightColors.length];
+                const pt = new THREE.PointLight(ptCol, 4.2, 54, 0.85);
+                pt.position.set(side * 3.8, 6.6, 0);
+                lg.add(pt);
+              } else if (sl % 4 === 0 && quality === 'low') {
+                const pt = new THREE.PointLight(0xffdca8, 3.8, 52, 0.85);
+                pt.position.set(side * 3.8, 6.6, 0);
                 lg.add(pt);
               }
               lg.position.set(s.x, 0, s.z);
@@ -3658,6 +3979,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             lakeMat,
             streetLampMat: towerGlowMat,
             isForcedNightCity: activeScenery === 'city' && timeOfDayModeRef.current === 'realtime',
+            isCityMap: activeScenery === 'city',
           });
 
           const cw = container.clientWidth || 540;
@@ -3747,8 +4069,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 hemiLight.color.setHex(0xcbd5e1);
                 sunLight.intensity = 1.75;
                 renderer.toneMappingExposure = 1.35;
-                buildingBodyMat.emissive.setHex(0xffffff);
-                buildingBodyMat.emissiveIntensity = 0.85;
+                buildingFacadeMats.forEach((bm) => {
+                  bm.emissive.setHex(0xffffff);
+                  bm.emissiveIntensity = 0.85;
+                });
               }
               for (let k = 0; k < pool.length; k++) {
                 if (pool[k].root.visible) {
@@ -3774,8 +4098,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                 hemiLight.color.setHex(savedHemiSky);
                 sunLight.intensity = savedSunInt;
                 renderer.toneMappingExposure = savedExposure;
-                buildingBodyMat.emissive.setHex(savedBldgEmissive);
-                buildingBodyMat.emissiveIntensity = savedBldgEmissiveInt;
+                buildingFacadeMats.forEach((bm) => {
+                  bm.emissive.setHex(savedBldgEmissive);
+                  bm.emissiveIntensity = savedBldgEmissiveInt;
+                });
               }
               heroLightRig.keyLight.visible = savedKeyVis;
               heroLightRig.rimLight.visible = savedRimVis;
@@ -3920,6 +4246,12 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           asphaltPBR.dispose();
           cityTarAsphaltPBR.dispose();
           buildingFacadeTex.dispose();
+          cityPavementTex.dispose();
+          buildingFacadeMats.forEach((m) => m.dispose());
+          buildingRoofMat.dispose();
+          buildingPenthouseMat.dispose();
+          cityPlazaGroundMat.dispose();
+          citySidewalkMat.dispose();
           softLampGlowTex.dispose();
           heroLightRig.dispose();
           matDragonHoloEast.dispose();

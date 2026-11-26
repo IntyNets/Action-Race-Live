@@ -20,7 +20,7 @@
         writable: true,
       });
     }
-  } catch {}
+  } catch { }
 
   if (!location.hostname.includes('facebook.com')) return;
   if (window.__VN_FB_NET_HOOKED) return;
@@ -266,7 +266,7 @@
       try {
         const parsed = JSON.parse(trimmed);
         scanGraphQlObject(parsed, 0);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -288,7 +288,7 @@
           if (typeof this.responseText === 'string') {
             inspectResponseText(this.responseText);
           }
-        } catch {}
+        } catch { }
       });
     }
     return origSend.apply(this, args);
@@ -305,9 +305,9 @@
           .clone()
           .text()
           .then((t) => inspectResponseText(t))
-          .catch(() => {});
+          .catch(() => { });
       }
-    } catch {}
+    } catch { }
     return res;
   };
 })();
