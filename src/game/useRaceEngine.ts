@@ -57,11 +57,20 @@ import {
   detectStageOutputModeFromUrl,
   isBroadcastOutputModeId,
 } from '../live/broadcastModes';
+import {
+  askRaceFreeAi,
+  tryPuterBrowserAi,
+  type AiReplyRecord,
+  type McStyle,
+} from '../live/aiClient';
 
 // Phân tách Chế Độ Live (/?view=stage) và Bảng Điều Khiển (/) giống npc-action-live
 export const IS_STAGE =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).get('view') === 'stage';
+
+const IS_PREVIEW_IFRAME =
+  typeof window !== 'undefined' && window.location.pathname.includes('/preview/');
 
 export const STAGE_OUTPUT_MODE: BroadcastOutputModeId = detectStageOutputModeFromUrl();
 export const IS_BROWSER_SOURCE = IS_STAGE && STAGE_OUTPUT_MODE === 'browser_source';
@@ -279,6 +288,11 @@ export function useRaceEngine() {
   const [stageHealth, setStageHealth] = useState<StageHealthSnapshot | null>(null);
   const [stageOnline, setStageOnline] = useState<boolean>(false);
   const [ttsTestResult, setTtsTestResult] = useState<TtsTestResult>({ status: 'untested' });
+  const aiRaceEnabledRef = useRef<boolean>(true);
+  const mcStyleRef = useRef<McStyle>('esports');
+  const aiRaceBusyRef = useRef<boolean>(false);
+  const lastAiOvertakeAtRef = useRef<number>(0);
+  const [aiReplies, setAiReplies] = useState<AiReplyRecord[]>([]);
   const [broadcastMode, setBroadcastModeState] = useState<BroadcastOutputModeId>(() => {
     try {
       const saved = localStorage.getItem('broadcastOutputMode');
@@ -1271,14 +1285,31 @@ export function useRaceEngine() {
     if (winners[0]) {
       const top2Text = winners[1] ? `, Á quân là ${winners[1].nickname}` : '';
       const top3Text = winners[2] ? ` và hạng ba thuộc về ${winners[2].nickname}` : '';
+      const fallbackWinLine = `Xin chúc mừng nhà vô địch ${winners[0].nickname} đã xuất sắc cán đích đầu tiên sau ${totalLapsRef.current} vòng đua nghẹt thở${top2Text}${top3Text}! Ván đua mới sẽ mở lại sau 10 giây nữa!`;
       pushFeed(
         `🏆 QUÁN QUÂN VÁN #${matchNoRef.current}: ${winners[0].nickname} (Lv.${winners[0].level})!`,
         'dragon',
       );
-      speakCommentator(
-        `Xin chúc mừng nhà vô địch ${winners[0].nickname} đã xuất sắc cán đích đầu tiên sau ${totalLapsRef.current} vòng đua nghẹt thở${top2Text}${top3Text}! Ván đua mới sẽ mở lại sau 10 giây nữa!`,
-        true,
-      );
+      const shouldDriveAi =
+        !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
+      if (aiRaceEnabledRef.current) {
+        if (shouldDriveAi) {
+          const podiumPrompt = `Kết thúc ván đua #${matchNoRef.current} (${totalLapsRef.current} vòng): Quán quân là ${winners[0].nickname} (Cấp ${winners[0].level}${winners[0].petName ? `, thú cưng ${winners[0].petName}` : ''})${top2Text}${top3Text}. Hãy vinh danh chúc mừng cực cảm xúc và rủ khán giả chuẩn bị cho ván mới sau 10 giây!`;
+          void askRaceFreeAi({
+            mode: 'race',
+            eventKind: 'podium',
+            question: podiumPrompt,
+            mcStyle: mcStyleRef.current,
+            speakOnStage: true,
+          }).then((res) => {
+            if (!res.ok) {
+              speakCommentator(fallbackWinLine, true);
+            }
+          });
+        }
+      } else {
+        speakCommentator(fallbackWinLine, true);
+      }
     }
     pushRaceSync(true);
   }, [pushFeed, pushRaceSync, syncRacerProfilesToServer]);
@@ -1949,9 +1980,67 @@ export function useRaceEngine() {
         setStageOnline(true);
       } else if (type === 'ttsTestResult' && data && !IS_STAGE) {
         setTtsTestResult(data as TtsTestResult);
+      } else if (type === 'hostSettings' && data && typeof data === 'object') {
+        if (typeof data.aiRaceEnabled === 'boolean') {
+          aiRaceEnabledRef.current = data.aiRaceEnabled;
+        }
+        if (
+          data.mcStyle === 'esports' ||
+          data.mcStyle === 'humorous' ||
+          data.mcStyle === 'lively' ||
+          data.mcStyle === 'warm'
+        ) {
+          mcStyleRef.current = data.mcStyle;
+        }
+        if (Array.isArray(data.recentReplies)) {
+          setAiReplies(data.recentReplies as AiReplyRecord[]);
+        }
+      } else if (type === 'aiReply' && data && typeof data.reply === 'string') {
+        const rec = data as AiReplyRecord;
+        setAiReplies((prev) => [rec, ...prev.filter((x) => x.id !== rec.id)].slice(0, 12));
+      } else if (type === 'aiClientTask' && data && typeof data.question === 'string') {
+        const shouldRunFallback =
+          !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
+        if (shouldRunFallback) {
+          void tryPuterBrowserAi({
+            mode: data.mode === 'race' ? 'race' : 'chat',
+            userName: String(data.userName || 'Tay đua'),
+            question: String(data.question),
+            raceContext: typeof data.raceContext === 'string' ? data.raceContext : undefined,
+            mcStyle: data.mcStyle,
+            platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+          }).then((reply) => {
+            if (!reply) return;
+            void fetch('/api/npc/ai-broadcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mode: data.mode === 'race' ? 'race' : 'chat',
+                userName: data.userName,
+                question: data.question,
+                reply,
+                provider: 'Puter GPT-4o Free',
+                platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
+                speakOnStage: true,
+                priority: true,
+              }),
+            }).catch(() => {});
+          });
+        }
       } else if (type === 'hostReply' && typeof data.text === 'string') {
-        pushFeed(`🎙️ ${data.text}`, 'system');
-        if (IS_STAGE) speakCommentator(data.text);
+        pushFeed(`🎙️ BLV AI: ${data.text}`, 'system');
+        const canSpeakHere =
+          !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
+        if (canSpeakHere) {
+          const prio = Boolean(data.priority);
+          const k =
+            data.kind === 'gift' || data.kind === 'phase' || data.kind === 'event'
+              ? data.kind
+              : prio
+                ? 'event'
+                : 'normal';
+          speakCommentator(data.text, prio, k);
+        }
       } else if (type === 'chat') {
         handleChat({
           userId: String(data.userId || data.username || data.nickname || 'viewer'),
@@ -2066,6 +2155,9 @@ export function useRaceEngine() {
           'raceSync',
           'stageHealth',
           'ttsTestResult',
+          'hostSettings',
+          'aiReply',
+          'aiClientTask',
           'control',
           'chat',
           'hostReply',
@@ -2305,14 +2397,43 @@ export function useRaceEngine() {
             ];
             const line = overtakeLines[commentIdxRef.current++ % overtakeLines.length];
             pushFeed(`🔥 ${currTop1.nickname} bứt phá chiếm ngôi TOP 1!`, 'sprint');
-            speakCommentator(line, true);
+            const shouldDriveAi =
+              !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
+            const nowWall = Date.now();
+            if (
+              aiRaceEnabledRef.current &&
+              shouldDriveAi &&
+              !aiRaceBusyRef.current &&
+              nowWall - lastAiOvertakeAtRef.current >= 8000
+            ) {
+              lastAiOvertakeAtRef.current = nowWall;
+              aiRaceBusyRef.current = true;
+              const boostNote =
+                currTop1.boost !== 'none' ? ` nhờ bật ${currTop1.boostLabel || currTop1.boost}` : '';
+              const gapMeters = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 2;
+              void askRaceFreeAi({
+                mode: 'race',
+                eventKind: 'overtake',
+                question: `${currTop1.nickname} vừa vượt mặt ${prevLeader?.nickname || 'đối thủ'}${boostNote} để cướp ngôi Top 1 ở vòng ${currTop1.lap}/${totalLapsRef.current}, hiện nhỉnh hơn ${gapMeters} mét!`,
+                mcStyle: mcStyleRef.current,
+                speakOnStage: true,
+              })
+                .then((res) => {
+                  if (!res.ok) speakCommentator(line, true);
+                })
+                .finally(() => {
+                  aiRaceBusyRef.current = false;
+                });
+            } else if (!aiRaceEnabledRef.current || (shouldDriveAi && nowWall - lastAiOvertakeAtRef.current < 8000)) {
+              speakCommentator(line, true);
+            }
             liveCommentAccumRef.current = 0; // Reset nhịp bình luận định kỳ sau pha vượt Top 1
           }
           lastTop1IdRef.current = currTop1.id;
         }
 
-        // Bình luận viên tường thuật diễn biến trực tiếp mỗi 8.2 giây suốt chặng đua
-        if (liveCommentAccumRef.current >= 8.2 && currTop1) {
+        // Bình luận viên tường thuật diễn biến trực tiếp mỗi 9.4 giây suốt chặng đua
+        if (liveCommentAccumRef.current >= 9.4 && currTop1) {
           liveCommentAccumRef.current = 0;
           const gap12 = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 0;
           const pct = Math.min(99, Math.max(1, Math.round((currTop1.z / totalRaceDist) * 100)));
@@ -2332,8 +2453,42 @@ export function useRaceEngine() {
             playByPlay = `Đoàn đua ${list.length} tay đua đang ôm cua tốc độ cao ở vòng ${currTop1.lap} trên ${totalLapsRef.current}! Cả nhà chạm thả tim liên tục và bình luận để kích hoạt tia sét The Flash nhé!`;
           }
 
-          pushFeed(`🎙️ BLV: ${playByPlay}`, 'system');
-          speakCommentator(playByPlay, false);
+          const shouldDriveAi =
+            !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
+          if (aiRaceEnabledRef.current) {
+            if (shouldDriveAi && !aiRaceBusyRef.current) {
+              aiRaceBusyRef.current = true;
+              const topSummary = [
+                `Top 1: ${currTop1.nickname} (Lv.${currTop1.level}${currTop1.boost !== 'none' ? `, đang bật ${currTop1.boostLabel || currTop1.boost}` : ''})`,
+                currTop2 ? `Top 2: ${currTop2.nickname} (kém ${gap12}m)` : '',
+                currTop3 ? `Top 3: ${currTop3.nickname}` : '',
+                boostingRacer && boostingRacer.id !== currTop1.id
+                  ? `${boostingRacer.nickname} ở hạng ${boostingRacer.rank} đang bật ${boostingRacer.boostLabel || boostingRacer.boost}`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('; ');
+              void askRaceFreeAi({
+                mode: 'race',
+                eventKind: 'play_by_play',
+                question: `Vòng ${currTop1.lap}/${totalLapsRef.current} (${pct}% quãng đường, ${list.length} tay đua): ${topSummary}. Hãy bình luận trực tiếp thật tự nhiên, cuốn hút và kêu gọi khán giả thả tim/tặng quà tăng tốc!`,
+                mcStyle: mcStyleRef.current,
+                speakOnStage: true,
+              })
+                .then((res) => {
+                  if (!res.ok) {
+                    pushFeed(`🎙️ BLV: ${playByPlay}`, 'system');
+                    speakCommentator(playByPlay, false);
+                  }
+                })
+                .finally(() => {
+                  aiRaceBusyRef.current = false;
+                });
+            }
+          } else {
+            pushFeed(`🎙️ BLV: ${playByPlay}`, 'system');
+            speakCommentator(playByPlay, false);
+          }
         }
       }
 
@@ -3061,6 +3216,7 @@ export function useRaceEngine() {
     stageHealth,
     stageOnline,
     ttsTestResult,
+    aiReplies,
     triggerTtsTest,
     broadcastMode,
     setBroadcastMode: changeBroadcastMode,

@@ -56,6 +56,7 @@ export default function App() {
     speakCustom,
     liveStatus,
     savedUsers,
+    aiReplies,
     autoBots,
     setAutoBots,
     stepPhysics,
@@ -2408,7 +2409,7 @@ export default function App() {
               )}
             </section>
 
-            <RaceHostPanel />
+            <RaceHostPanel liveReplies={aiReplies} />
 
             {/* 5. Điều khiển Âm Thanh & Bình Luận Viên Thể Thao Trực Tiếp */}
             <section className="rounded-2xl bg-slate-900/90 border border-white/10 p-4 flex flex-col gap-3">

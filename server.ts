@@ -92,9 +92,18 @@ function resolveUsersFilePath(): string {
 
 const hostCommentary = createHostCommentary(
   path.join(path.dirname(resolveUsersFilePath()), 'host-commentary.json'),
-  (text) => broadcastWs('hostReply', { text }),
+  {
+    emitHostSpeech: (payload) => broadcastWs('hostReply', payload),
+    emitAiReply: (record) => broadcastWs('aiReply', record),
+    emitSettings: (viewData) => broadcastWs('hostSettings', viewData),
+    emitClientFallbackTask: (task) => broadcastWs('aiClientTask', task),
+    getLatestSnapshot: () => latestRaceSnapshot,
+  },
 );
 app.use('/api/host', hostCommentary.router);
+app.post('/api/npc/ai-reply', (req, res) => void hostCommentary.handleAiReplyHttp(req, res));
+app.post('/api/npc/ai-broadcast', (req, res) => hostCommentary.handleAiBroadcastHttp(req, res));
+app.get('/api/npc/chat-outbox', (_req, res) => res.json({ success: true, data: hostCommentary.chatOutbox() }));
 
 let usersStore: Record<string, StoredUserProfile> = {};
 const knownFollowers = new Set<string>();
@@ -267,6 +276,7 @@ app.get('/api/tiktok/events', (req, res) => {
   res.flushHeaders?.();
   res.write(`event: status\ndata: ${JSON.stringify(liveStatus)}\n\n`);
   res.write(`event: users\ndata: ${JSON.stringify(getSortedUsersList())}\n\n`);
+  res.write(`event: hostSettings\ndata: ${JSON.stringify(hostCommentary.view())}\n\n`);
   if (latestRaceSnapshot) {
     res.write(`event: raceSync\ndata: ${JSON.stringify(latestRaceSnapshot)}\n\n`);
   }
@@ -297,6 +307,7 @@ wss.on('connection', (ws) => {
   try {
     ws.send(JSON.stringify({ type: 'status', data: liveStatus, ts: Date.now() }));
     ws.send(JSON.stringify({ type: 'users', data: getSortedUsersList(), ts: Date.now() }));
+    ws.send(JSON.stringify({ type: 'hostSettings', data: hostCommentary.view(), ts: Date.now() }));
     if (latestRaceSnapshot) {
       ws.send(JSON.stringify({ type: 'raceSync', data: latestRaceSnapshot, ts: Date.now() }));
     }
@@ -1615,7 +1626,11 @@ app.post('/api/test/emit', (req, res) => {
     liveStatus.totalLikes += Number(event.likeCount) || 1;
     event.totalLikes = liveStatus.totalLikes;
   }
-  broadcastWs(type, event);
+  if (type === 'chat') {
+    broadcastAudienceChat(event);
+  } else {
+    broadcastWs(type, event);
+  }
   res.json({ success: true, clients: wsClients.size });
 });
 
