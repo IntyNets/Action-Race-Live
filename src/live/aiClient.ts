@@ -225,7 +225,7 @@ export async function askRaceFreeAi(params: AskRaceAiParams): Promise<AskRaceAiR
     });
     if (res.ok) {
       const data: any = await res.json().catch(() => null);
-      if (data?.disabled) {
+      if (data?.disabled || data?.pausedForAudience) {
         serverDisabled = true;
       } else {
         errorDetail = data?.errorDetail;

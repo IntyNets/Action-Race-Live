@@ -214,7 +214,7 @@ export function playCrowdCheerSfx() {
 // - Không bao giờ xóa nhầm lời cảm ơn quà tặng (gift) khi chuyển pha game
 // - Gom quà tặng liên tiếp của cùng người xem trong cửa sổ 1.4s
 // ============================================================================
-export type TtsKind = 'normal' | 'event' | 'phase' | 'gift';
+export type TtsKind = 'normal' | 'event' | 'audience' | 'phase' | 'gift';
 
 interface TtsQueueItem {
   text: string;
@@ -235,6 +235,7 @@ let activeTtsAbort: AbortController | null = null;
 let activeTtsKind: TtsKind | null = null;
 let isProcessingTts = false;
 let lastTtsAt = 0;
+let lastAudienceEndedAt = 0;
 let casterToggle: 'm' | 'f' = 'm';
 let ttsGeneration = 0;
 
@@ -304,8 +305,8 @@ export function stopCommentator() {
  * NHƯNG giữ nguyên toàn bộ lời cảm ơn quà tặng (kind === 'gift') để không bao giờ bỏ sót cảm ơn khán giả!
  */
 export function stopNonCriticalCommentator() {
-  ttsQueue = ttsQueue.filter((item) => item.kind === 'gift');
-  if (activeTtsKind && activeTtsKind !== 'gift') {
+  ttsQueue = ttsQueue.filter((item) => item.kind === 'gift' || item.kind === 'audience');
+  if (activeTtsKind && activeTtsKind !== 'gift' && activeTtsKind !== 'audience') {
     ttsGeneration++;
     if (activeTtsAbort) {
       try {
@@ -328,6 +329,48 @@ export function stopNonCriticalCommentator() {
       void processNextTts();
     }
   }
+}
+
+/**
+ * Khi có bình luận của khán giả cần MC trả lời:
+ * Tạm dừng ngay các câu bình luận tự động đang chờ hoặc đang đọc dở (normal / event),
+ * nhưng giữ nguyên lời cảm ơn quà tặng (gift) và câu trả lời khán giả khác (audience).
+ */
+export function pauseAutoCommentaryForAudience() {
+  ttsQueue = ttsQueue.filter(
+    (item) => item.kind === 'gift' || item.kind === 'audience' || item.kind === 'phase',
+  );
+  if (activeTtsKind === 'normal' || activeTtsKind === 'event') {
+    ttsGeneration++;
+    if (activeTtsAbort) {
+      try {
+        activeTtsAbort.abort();
+      } catch {}
+      activeTtsAbort = null;
+    }
+    if (activeTtsSource) {
+      try {
+        activeTtsSource.onended = null;
+        activeTtsSource.stop();
+        activeTtsSource.disconnect();
+      } catch {}
+      activeTtsSource = null;
+    }
+    activeTtsKind = null;
+    isProcessingTts = false;
+    notifyMcSpeaking(false);
+    if (ttsQueue.length > 0) {
+      void processNextTts();
+    }
+  }
+}
+
+/** Cho biết MC hiện có đang trả lời khán giả (hoặc vừa trả lời xong trong nhịp nghỉ 1.8s) hay không */
+export function isAudienceInteractionActive(): boolean {
+  if (activeTtsKind === 'audience') return true;
+  if (ttsQueue.some((item) => item.kind === 'audience')) return true;
+  if (lastAudienceEndedAt > 0 && Date.now() - lastAudienceEndedAt < 1800) return true;
+  return false;
 }
 
 function pruneExpiredQueue() {
@@ -408,6 +451,9 @@ async function processNextTts() {
     notifyMcSpeaking(true, Math.ceil(audioBuf.duration * 1000) + 600);
     src.onended = () => {
       if (myGen !== ttsGeneration) return;
+      if (next.kind === 'audience') {
+        lastAudienceEndedAt = Date.now();
+      }
       try {
         src.disconnect();
       } catch {}
@@ -450,17 +496,37 @@ export function speakCommentator(text: string, priority = false, kind?: TtsKind)
   casterToggle = casterToggle === 'm' ? 'f' : 'm';
   const resolvedKind: TtsKind = kind || (priority ? 'event' : 'normal');
   const priorityNum =
-    resolvedKind === 'gift' ? 100 : resolvedKind === 'phase' ? 90 : resolvedKind === 'event' ? 60 : 20;
-  // Thời hạn sự kiện riêng theo mức độ quan trọng (quà tặng giữ tới 22s, không bao giờ hủy nhầm!)
+    resolvedKind === 'gift'
+      ? 100
+      : resolvedKind === 'audience'
+        ? 95
+        : resolvedKind === 'phase'
+          ? 88
+          : resolvedKind === 'event'
+            ? 60
+            : 20;
+  // Thời hạn sự kiện riêng theo mức độ quan trọng (quà tặng giữ tới 22s, trả lời khán giả giữ 18s)
   const maxAgeMs =
-    resolvedKind === 'gift' ? 22000 : resolvedKind === 'phase' ? 5000 : resolvedKind === 'event' ? 7500 : 3800;
+    resolvedKind === 'gift'
+      ? 22000
+      : resolvedKind === 'audience'
+        ? 18000
+        : resolvedKind === 'phase'
+          ? 5000
+          : resolvedKind === 'event'
+            ? 7500
+            : 3800;
 
-  if (resolvedKind === 'normal') {
-    if (isProcessingTts || ttsQueue.length > 0 || now - lastTtsAt < 2000) return;
+  if (resolvedKind === 'normal' || resolvedKind === 'event') {
+    // Nếu đang trả lời khán giả thì không chèn bình luận tự động vào hàng đợi
+    if (isAudienceInteractionActive()) return;
+    if (resolvedKind === 'normal' && (isProcessingTts || ttsQueue.length > 0 || now - lastTtsAt < 2000)) return;
   }
 
-  // Nếu là sự kiện chuyển pha hoặc quà lớn mà câu đang chạy chỉ là bình luận thường -> nhường đường ngay
-  if ((resolvedKind === 'gift' || resolvedKind === 'phase') && activeTtsKind === 'normal') {
+  // Khi có câu trả lời khán giả mới -> tạm dừng ngay câu bình luận tự động đang đọc dở để tương tác liền!
+  if (resolvedKind === 'audience') {
+    pauseAutoCommentaryForAudience();
+  } else if ((resolvedKind === 'gift' || resolvedKind === 'phase') && activeTtsKind === 'normal') {
     stopNonCriticalCommentator();
   }
 

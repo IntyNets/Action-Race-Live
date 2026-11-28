@@ -96,6 +96,7 @@ const hostCommentary = createHostCommentary(
     emitHostSpeech: (payload) => broadcastWs('hostReply', payload),
     emitAiReply: (record) => broadcastWs('aiReply', record),
     emitSettings: (viewData) => broadcastWs('hostSettings', viewData),
+    emitAudienceState: (state) => broadcastWs('audienceState', state),
     emitClientFallbackTask: (task) => broadcastWs('aiClientTask', task),
     getLatestSnapshot: () => latestRaceSnapshot,
   },

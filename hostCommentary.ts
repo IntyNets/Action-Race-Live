@@ -38,6 +38,7 @@ type AudienceComment = {
   comment?: string;
   platform?: string;
   isFollower?: boolean;
+  skipAiReply?: boolean;
   [field: string]: unknown;
 };
 
@@ -237,9 +238,15 @@ export function summarizeRaceSnapshot(snap: any, targetUser?: { userId?: string;
 }
 
 export interface HostBroadcastCallbacks {
-  emitHostSpeech: (payload: { text: string; priority?: boolean; kind?: 'normal' | 'event' | 'phase' | 'gift'; provider?: string }) => void;
+  emitHostSpeech: (payload: {
+    text: string;
+    priority?: boolean;
+    kind?: 'normal' | 'event' | 'audience' | 'phase' | 'gift';
+    provider?: string;
+  }) => void;
   emitAiReply: (record: AiReplyRecord) => void;
   emitSettings: (viewData: Record<string, unknown>) => void;
+  emitAudienceState: (state: { active: boolean; pending: number }) => void;
   emitClientFallbackTask: (task: {
     userName: string;
     question: string;
@@ -429,9 +436,9 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
             raceCtx ? `Tình hình đường đua hiện tại: ${raceCtx}` : '',
             webHint || '',
             'Luật chơi nhanh: Bấm Follow kênh là vào đua ngay (ai đã Follow chỉ cần nhắn 1 tin bất kỳ); chạm thả tim kích hoạt Tia Sét Plasma xanh; tặng quà bật Jetpack, Tên Lửa, Siêu Nhân hoặc cưỡi Rồng Thần Hologram.',
-            'Quy tắc trả lời:',
-            `1. Trả lời trực tiếp, tự nhiên và thông minh cho "${userName}" bằng tiếng Việt dễ đọc thành tiếng trong 1-2 câu gọn gàng (tối đa 48 từ). Chỉ gọi tên "${userName}" 1 lần.`,
-            '2. Nếu khán giả đang có mặt trên đường đua, hãy khéo léo nhắc tới thứ hạng hoặc cổ vũ họ bứt tốc. Nếu họ hỏi kiến thức thực tế hoặc xem bói/vận may/chấm điểm tên, hãy trả lời chính xác hoặc phán vui vẻ 9.5-10 điểm may mắn.',
+            'Quy tắc trả lời (vừa tương tác khán giả vừa dẫn nhịp đường đua):',
+            `1. Trả lời trực tiếp, tự nhiên và thân thiện cho "${userName}" bằng tiếng Việt dễ đọc thành tiếng trong 1-2 câu gọn gàng (tối đa 45 từ). Chỉ gọi tên "${userName}" 1 lần.`,
+            '2. Vừa trả lời đúng ý bình luận/câu hỏi của khán giả, vừa khéo léo gắn với diễn biến đường đua hiện tại (ví dụ nhắc thứ hạng của họ nếu đang đua, cổ vũ thả tim bật Tia Sét, hoặc xem bói vui chấm 9.5-10 điểm may mắn nếu họ hỏi vận may).',
             '3. Không dùng markdown (*, #, **), không đọc URL hay lời tiêu cực.',
           ]
             .filter(Boolean)
@@ -826,85 +833,169 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
     res.status(413).json({ success: false, error: 'Mẫu giọng phải dưới 10 MB.' });
   });
 
-  // Trả lời tự động bình luận của khán giả trên TikTok LIVE / Facebook Live
-  let nextReplyAt = 0;
-  let replying = false;
+  // Hàng đợi tương tác khán giả thông minh:
+  // - Trả lời đầy đủ bình luận khán giả theo lượt tự nhiên (không bỏ sót khi nhiều người bình luận gần nhau)
+  // - Phát tín hiệu audienceState { active: true } ngay lập tức để tạm dừng bình luận tự động,
+  //   và phát { active: false } ngay sau khi trả lời xong để bình luận tự động tiếp tục mượt mà!
+  interface QueuedAudienceComment {
+    userKey: string;
+    userId: string;
+    name: string;
+    comment: string;
+    platform: 'tiktok' | 'facebook';
+    isDirectQuestion: boolean;
+    queuedAt: number;
+  }
+
+  const commentQueue: QueuedAudienceComment[] = [];
+  let processingQueue = false;
   const conversations = new Map<string, { comment: string; reply: string; at: number }>();
+  const sleepMs = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  function isAudienceBusy(): boolean {
+    return processingQueue || commentQueue.length > 0;
+  }
+
+  async function processCommentQueue() {
+    if (processingQueue) return;
+    processingQueue = true;
+    cb.emitAudienceState({ active: true, pending: commentQueue.length });
+
+    try {
+      while (commentQueue.length > 0 && settings.aiEnabled) {
+        // Ưu tiên câu hỏi trực tiếp lên trước bình luận cảm thán thường
+        commentQueue.sort((a, b) =>
+          a.isDirectQuestion !== b.isDirectQuestion
+            ? a.isDirectQuestion
+              ? -1
+              : 1
+            : a.queuedAt - b.queuedAt,
+        );
+        const item = commentQueue.shift()!;
+        if (Date.now() - item.queuedAt > 25_000) continue;
+
+        cb.emitAudienceState({ active: true, pending: commentQueue.length + 1 });
+
+        const raceContext = summarizeRaceSnapshot(cb.getLatestSnapshot(), {
+          userId: item.userId,
+          nickname: item.name,
+        });
+
+        const res = await generateAiCommentary({
+          mode: 'chat',
+          userName: item.name,
+          question: item.comment,
+          raceContext,
+          mcStyle: settings.mcStyle,
+        });
+
+        if (!settings.aiEnabled) break;
+
+        if (res.needClientFallback) {
+          cb.emitClientFallbackTask({
+            userName: item.name,
+            question: item.comment,
+            raceContext,
+            mcStyle: settings.mcStyle,
+            mode: 'chat',
+            platform: item.platform,
+          });
+          await sleepMs(3400);
+          continue;
+        }
+
+        if (!res.reply) continue;
+        const nowDone = Date.now();
+        conversations.set(item.userKey, { comment: item.comment, reply: res.reply, at: nowDone });
+        if (conversations.size > 150) conversations.delete(conversations.keys().next().value!);
+
+        const record: AiReplyRecord = {
+          id: nowDone,
+          userName: item.name,
+          question: item.comment,
+          reply: res.reply,
+          provider: res.provider,
+          kind: 'chat',
+          platform: item.platform,
+          at: nowDone,
+        };
+        pushReplyRecord(record);
+        cb.emitHostSpeech({
+          text: res.reply,
+          priority: true,
+          kind: 'audience',
+          provider: res.provider,
+        });
+
+        // Chờ ước lượng thời gian MC đọc xong câu trả lời cho khán giả này trước khi chuyển sang khán giả tiếp theo hoặc mở lại bình luận tự động
+        const speakHoldMs = Math.max(2600, Math.min(5600, res.reply.length * 46));
+        await sleepMs(speakHoldMs);
+      }
+    } catch {
+      /* Giữ luồng đua ổn định nếu mạng AI gián đoạn */
+    } finally {
+      processingQueue = false;
+      cb.emitAudienceState({ active: false, pending: 0 });
+    }
+  }
 
   async function replyToComment(event: AudienceComment) {
+    if (!settings.aiEnabled || event.skipAiReply) return;
     const now = Date.now();
     const comment = String(event.comment || '').replace(/\s+/g, ' ').trim().slice(0, 220);
-    if (!settings.aiEnabled || replying || now < nextReplyAt || !/\p{L}{2}/u.test(comment)) return;
-    // Bỏ qua các lệnh join 1 từ thuần túy hoặc spam tim thuần túy để dành thời lượng cho giao lưu thật
-    if (/^(join|vào|vao|vào đua|vao dua|đua|dua|tim+|like+|thả tim|tha tim)$/iu.test(comment)) return;
+    // Bỏ qua tin rỗng hoặc chỉ toàn icon thả tim/like thuần túy (đã kích hoạt SPRINT riêng)
+    if (!comment || !/[\p{L}\d]/u.test(comment)) return;
+    if (/^(?:tim+|like+|thả tim|tha tim)$/iu.test(comment)) return;
 
     const name = String(event.nickname || event.username || 'bạn').replace(/\s+/g, ' ').trim().slice(0, 40);
     const platform: 'tiktok' | 'facebook' = event.platform === 'facebook' ? 'facebook' : 'tiktok';
-    const userKey = `${platform}:${event.userId || event.username || name}`.slice(0, 180);
+    const userId = String(event.userId || event.username || name);
+    const userKey = `${platform}:${userId}`.slice(0, 180);
+    const isDirectQuestion = /(\?|mc|blv|shop|ad|ơi|bói|vận may|chấm điểm|mấy giờ|hạng mấy|ai thắng|chào|hello|hi\b)/iu.test(
+      comment,
+    );
+
     const previous = conversations.get(userKey);
-    const isDirectQuestion = /(\?|mc|blv|ơi|bói|vận may|chấm điểm|mấy giờ|hạng mấy|ai thắng)/iu.test(comment);
-    if (previous && now - previous.at < (isDirectQuestion ? 10_000 : 22_000)) return;
+    if (previous && now - previous.at < (isDirectQuestion ? 5500 : 9000)) return;
 
-    nextReplyAt = now + (isDirectQuestion ? 5500 : 8500);
-    replying = true;
-    try {
-      const raceContext = summarizeRaceSnapshot(cb.getLatestSnapshot(), {
-        userId: String(event.userId || event.username || ''),
-        nickname: name,
-      });
-
-      const res = await generateAiCommentary({
-        mode: 'chat',
-        userName: name,
-        question: comment,
-        raceContext,
-        mcStyle: settings.mcStyle,
-      });
-
-      if (!settings.aiEnabled) return;
-
-      if (res.needClientFallback) {
-        // Nhờ trình duyệt đang mở chạy Puter GPT-4o-mini miễn phí không cần API key!
-        cb.emitClientFallbackTask({
-          userName: name,
-          question: comment,
-          raceContext,
-          mcStyle: settings.mcStyle,
-          mode: 'chat',
-          platform,
-        });
-        return;
+    // Nếu người này đang có tin chờ trong hàng đợi thì cập nhật sang câu mới nhất thay vì nhân đôi
+    const existingIdx = commentQueue.findIndex((q) => q.userKey === userKey);
+    const entry: QueuedAudienceComment = {
+      userKey,
+      userId,
+      name,
+      comment,
+      platform,
+      isDirectQuestion,
+      queuedAt: now,
+    };
+    if (existingIdx >= 0) {
+      commentQueue[existingIdx] = entry;
+    } else {
+      if (commentQueue.length >= 5) {
+        const dropIdx = commentQueue.findIndex((q) => !q.isDirectQuestion);
+        commentQueue.splice(dropIdx >= 0 ? dropIdx : 0, 1);
       }
-
-      if (!res.reply) return;
-      conversations.set(userKey, { comment, reply: res.reply, at: now });
-      if (conversations.size > 120) conversations.delete(conversations.keys().next().value!);
-
-      const record: AiReplyRecord = {
-        id: Date.now(),
-        userName: name,
-        question: comment,
-        reply: res.reply,
-        provider: res.provider,
-        kind: 'chat',
-        platform,
-        at: now,
-      };
-      pushReplyRecord(record);
-      cb.emitHostSpeech({ text: res.reply, priority: true, kind: 'event', provider: res.provider });
-    } catch {
-      /* Giữ luồng đua bình thường nếu mạng AI chập chờn */
-    } finally {
-      replying = false;
+      commentQueue.push(entry);
     }
+
+    // Báo hiệu tạm dừng bình luận tự động ngay tức khắc trước cả khi gọi LLM
+    cb.emitAudienceState({ active: true, pending: commentQueue.length + (processingQueue ? 1 : 0) });
+    void processCommentQueue();
   }
 
   // API chung `/api/npc/ai-reply` & `/api/npc/ai-broadcast` tương thích 100% với npc-action-live & CPanel Proxy!
   async function handleAiReplyHttp(req: Request, res: Response) {
     try {
       const mode: 'chat' | 'race' = req.body?.mode === 'race' ? 'race' : 'chat';
-      if (mode === 'race' && !settings.aiRaceEnabled && !req.body?.forceTest) {
-        return res.json({ success: false, disabled: true });
+      if (mode === 'race' && !req.body?.forceTest) {
+        if (!settings.aiRaceEnabled) {
+          return res.json({ success: false, disabled: true });
+        }
+        // Đang trả lời khán giả -> Tạm dừng toàn bộ bình luận tự động của đường đua!
+        if (isAudienceBusy()) {
+          return res.json({ success: false, pausedForAudience: true });
+        }
       }
       const userName = String(req.body?.userName || 'Tay đua').trim().slice(0, 40) || 'Tay đua';
       const question = String(req.body?.question || '').trim().slice(0, 320);
@@ -914,6 +1005,10 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
       const platform: 'tiktok' | 'facebook' = req.body?.platform === 'facebook' ? 'facebook' : 'tiktok';
       const skipOfflineBroadcast = Boolean(req.body?.skipOfflineBroadcast);
       const speakOnStage = req.body?.speakOnStage !== false;
+
+      if (mode === 'chat') {
+        cb.emitAudienceState({ active: true, pending: 1 });
+      }
 
       const generated = await generateAiCommentary({
         mode,
@@ -927,6 +1022,11 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
         openrouterKey: typeof req.body?.openrouterKey === 'string' ? req.body.openrouterKey : undefined,
         pollinationsKey: typeof req.body?.pollinationsKey === 'string' ? req.body.pollinationsKey : undefined,
       });
+
+      // Nếu trong lúc chờ AI tạo câu bình luận đường đua mà có khán giả vừa nhắn tin -> hủy phát câu tự động để nhường lời cho khán giả!
+      if (mode === 'race' && !req.body?.forceTest && isAudienceBusy()) {
+        return res.json({ success: false, pausedForAudience: true });
+      }
 
       const record: AiReplyRecord = {
         id: Date.now(),
@@ -946,10 +1046,17 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
           cb.emitHostSpeech({
             text: generated.reply,
             priority,
-            kind: priority ? 'event' : 'normal',
+            kind: mode === 'chat' ? 'audience' : priority ? 'event' : 'normal',
             provider: generated.provider,
           });
         }
+      }
+
+      if (mode === 'chat' && !isAudienceBusy()) {
+        const hold = generated.reply ? Math.max(2200, Math.min(5000, generated.reply.length * 44)) : 500;
+        setTimeout(() => {
+          if (!isAudienceBusy()) cb.emitAudienceState({ active: false, pending: 0 });
+        }, hold).unref?.();
       }
 
       return res.json({
@@ -959,12 +1066,16 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
         errorDetail: generated.errorDetail,
       });
     } catch (err: any) {
+      if (!isAudienceBusy()) cb.emitAudienceState({ active: false, pending: 0 });
       return res.status(500).json({ success: false, error: err?.message || 'Lỗi xử lý AI' });
     }
   }
 
   function handleAiBroadcastHttp(req: Request, res: Response) {
     const mode: 'chat' | 'race' = req.body?.mode === 'race' ? 'race' : 'chat';
+    if (mode === 'race' && isAudienceBusy()) {
+      return res.json({ success: false, pausedForAudience: true });
+    }
     const userName = String(req.body?.userName || (mode === 'race' ? 'BLV AI' : 'Tay đua')).trim().slice(0, 40);
     const question = String(req.body?.question || '').trim().slice(0, 320);
     const reply = cleanAiText(String(req.body?.reply || ''), 280);
@@ -988,7 +1099,7 @@ export function createHostCommentary(settingsFile: string, cb: HostBroadcastCall
       cb.emitHostSpeech({
         text: reply,
         priority,
-        kind: priority ? 'event' : 'normal',
+        kind: mode === 'chat' ? 'audience' : priority ? 'event' : 'normal',
         provider,
       });
     }

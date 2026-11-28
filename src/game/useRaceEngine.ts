@@ -26,6 +26,8 @@ import {
 } from './camera/CameraDirector';
 import {
   getTtsQueueLength,
+  isAudienceInteractionActive,
+  pauseAutoCommentaryForAudience,
   playCountdownBeep,
   playCrowdCheerSfx,
   playFinishFanfareSfx,
@@ -291,8 +293,13 @@ export function useRaceEngine() {
   const aiRaceEnabledRef = useRef<boolean>(true);
   const mcStyleRef = useRef<McStyle>('esports');
   const aiRaceBusyRef = useRef<boolean>(false);
+  const serverAudienceActiveRef = useRef<boolean>(false);
   const lastAiOvertakeAtRef = useRef<number>(0);
   const [aiReplies, setAiReplies] = useState<AiReplyRecord[]>([]);
+  const isAnsweringAudience = useCallback(
+    () => serverAudienceActiveRef.current || isAudienceInteractionActive(),
+    [],
+  );
   const [broadcastMode, setBroadcastModeState] = useState<BroadcastOutputModeId>(() => {
     try {
       const saved = localStorage.getItem('broadcastOutputMode');
@@ -1368,7 +1375,7 @@ export function useRaceEngine() {
         'join',
       );
       const nowMs = Date.now();
-      if (nowMs - lastFollowVoiceAtRef.current > 4500) {
+      if (!isAnsweringAudience() && nowMs - lastFollowVoiceAtRef.current > 4500) {
         lastFollowVoiceAtRef.current = nowMs;
         speakCommentator(
           `Cảm ơn bạn ${payload.nickname} đã Follow kênh! Nhân vật của bạn đã chính thức vào đường đua rồi nhé!`,
@@ -1998,10 +2005,19 @@ export function useRaceEngine() {
       } else if (type === 'aiReply' && data && typeof data.reply === 'string') {
         const rec = data as AiReplyRecord;
         setAiReplies((prev) => [rec, ...prev.filter((x) => x.id !== rec.id)].slice(0, 12));
+      } else if (type === 'audienceState' && data && typeof data === 'object') {
+        const active = Boolean(data.active);
+        serverAudienceActiveRef.current = active;
+        if (active) {
+          // Tạm dừng ngay bình luận tự động và giữ bộ đếm chờ sẵn để nối lại sau ~2.4s khi trả lời xong khán giả
+          pauseAutoCommentaryForAudience();
+          liveCommentAccumRef.current = Math.min(liveCommentAccumRef.current, 7.0);
+        }
       } else if (type === 'aiClientTask' && data && typeof data.question === 'string') {
         const shouldRunFallback =
           !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
         if (shouldRunFallback) {
+          pauseAutoCommentaryForAudience();
           void tryPuterBrowserAi({
             mode: data.mode === 'race' ? 'race' : 'chat',
             userName: String(data.userName || 'Tay đua'),
@@ -2028,17 +2044,24 @@ export function useRaceEngine() {
           });
         }
       } else if (type === 'hostReply' && typeof data.text === 'string') {
-        pushFeed(`🎙️ BLV AI: ${data.text}`, 'system');
+        const isAud = data.kind === 'audience';
+        pushFeed(isAud ? `💬 MC AI: ${data.text}` : `🎙️ BLV AI: ${data.text}`, 'system');
         const canSpeakHere =
           !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
         if (canSpeakHere) {
-          const prio = Boolean(data.priority);
+          const prio = Boolean(data.priority) || isAud;
           const k =
-            data.kind === 'gift' || data.kind === 'phase' || data.kind === 'event'
+            data.kind === 'audience' ||
+            data.kind === 'gift' ||
+            data.kind === 'phase' ||
+            data.kind === 'event'
               ? data.kind
               : prio
                 ? 'event'
                 : 'normal';
+          if (isAud) {
+            liveCommentAccumRef.current = Math.min(liveCommentAccumRef.current, 7.0);
+          }
           speakCommentator(data.text, prio, k);
         }
       } else if (type === 'chat') {
@@ -2099,16 +2122,16 @@ export function useRaceEngine() {
                 `👋 Chào mừng ${nick} quay lại phiên live! Nhắn 1 tin bất kỳ để chạy tiếp nhé!`,
                 'join',
               );
-              if (nowMs - lastReturnVoiceAtRef.current > 6000) {
+              if (!isAnsweringAudience() && nowMs - lastReturnVoiceAtRef.current > 6000) {
                 lastReturnVoiceAtRef.current = nowMs;
                 speakCommentator(
                   `Chào mừng bạn ${nick} đã quay trở lại phiên live! Hãy nhắn một tin bất kỳ để nhân vật vào lại đường đua chạy tiếp nhé!`,
                 );
               }
             } else {
-              // Khán giả mới vào phòng -> MC chào và hướng dẫn cách vào game (có chống spam)
+              // Khán giả mới vào phòng -> MC chào và hướng dẫn cách vào game (có chống spam, nhường micro nếu đang trả lời chat)
               const lastGreet = greetedViewersRef.current.get(uid) || 0;
-              if (nowMs - lastGreet > 180_000 && nowMs - lastWelcomeVoiceAtRef.current > 12_000) {
+              if (!isAnsweringAudience() && nowMs - lastGreet > 180_000 && nowMs - lastWelcomeVoiceAtRef.current > 12_000) {
                 greetedViewersRef.current.set(uid, nowMs);
                 lastWelcomeVoiceAtRef.current = nowMs;
                 if (greetedViewersRef.current.size > 300) {
@@ -2157,6 +2180,7 @@ export function useRaceEngine() {
           'ttsTestResult',
           'hostSettings',
           'aiReply',
+          'audienceState',
           'aiClientTask',
           'control',
           'chat',
@@ -2363,7 +2387,9 @@ export function useRaceEngine() {
             ? `Chỉ còn 7 giây nữa là xuất phát! Đã có ${countNow} tay đua sẵn sàng, cả nhà mau bình luận thêm để nhảy vào vạch xuất phát nào!`
             : 'Sắp xuất phát rồi! Follow để vào đua. Nếu đã Follow, hãy gửi một bình luận bất kỳ!';
         pushFeed(`🎙️ ${hypeLobby}`, 'system');
-        speakCommentator(hypeLobby);
+        if (!isAnsweringAudience()) {
+          speakCommentator(hypeLobby);
+        }
       }
 
       // Phát hiện sự kiện Vượt Lên Dẫn Đầu (OVERTAKE_EVENT) + Bình luận trực tiếp liên tục mỗi 8.2 giây
@@ -2400,40 +2426,49 @@ export function useRaceEngine() {
             const shouldDriveAi =
               !IS_PREVIEW_IFRAME && (IS_STAGE || Date.now() - lastStageBeatAtRef.current > 6000);
             const nowWall = Date.now();
-            if (
-              aiRaceEnabledRef.current &&
-              shouldDriveAi &&
-              !aiRaceBusyRef.current &&
-              nowWall - lastAiOvertakeAtRef.current >= 8000
-            ) {
-              lastAiOvertakeAtRef.current = nowWall;
-              aiRaceBusyRef.current = true;
-              const boostNote =
-                currTop1.boost !== 'none' ? ` nhờ bật ${currTop1.boostLabel || currTop1.boost}` : '';
-              const gapMeters = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 2;
-              void askRaceFreeAi({
-                mode: 'race',
-                eventKind: 'overtake',
-                question: `${currTop1.nickname} vừa vượt mặt ${prevLeader?.nickname || 'đối thủ'}${boostNote} để cướp ngôi Top 1 ở vòng ${currTop1.lap}/${totalLapsRef.current}, hiện nhỉnh hơn ${gapMeters} mét!`,
-                mcStyle: mcStyleRef.current,
-                speakOnStage: true,
-              })
-                .then((res) => {
-                  if (!res.ok) speakCommentator(line, true);
+            // Nếu MC đang trả lời bình luận khán giả -> tạm nhường micro, không chèn lời tự động
+            if (!isAnsweringAudience()) {
+              if (
+                aiRaceEnabledRef.current &&
+                shouldDriveAi &&
+                !aiRaceBusyRef.current &&
+                nowWall - lastAiOvertakeAtRef.current >= 8000
+              ) {
+                lastAiOvertakeAtRef.current = nowWall;
+                aiRaceBusyRef.current = true;
+                const boostNote =
+                  currTop1.boost !== 'none' ? ` nhờ bật ${currTop1.boostLabel || currTop1.boost}` : '';
+                const gapMeters = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 2;
+                void askRaceFreeAi({
+                  mode: 'race',
+                  eventKind: 'overtake',
+                  question: `${currTop1.nickname} vừa vượt mặt ${prevLeader?.nickname || 'đối thủ'}${boostNote} để cướp ngôi Top 1 ở vòng ${currTop1.lap}/${totalLapsRef.current}, hiện nhỉnh hơn ${gapMeters} mét!`,
+                  mcStyle: mcStyleRef.current,
+                  speakOnStage: true,
                 })
-                .finally(() => {
-                  aiRaceBusyRef.current = false;
-                });
-            } else if (!aiRaceEnabledRef.current || (shouldDriveAi && nowWall - lastAiOvertakeAtRef.current < 8000)) {
-              speakCommentator(line, true);
+                  .then((res) => {
+                    if (!res.ok && !isAnsweringAudience()) speakCommentator(line, true);
+                  })
+                  .finally(() => {
+                    aiRaceBusyRef.current = false;
+                  });
+              } else if (!aiRaceEnabledRef.current || (shouldDriveAi && nowWall - lastAiOvertakeAtRef.current < 8000)) {
+                speakCommentator(line, true);
+              }
+              liveCommentAccumRef.current = 0; // Reset nhịp bình luận định kỳ sau pha vượt Top 1
             }
-            liveCommentAccumRef.current = 0; // Reset nhịp bình luận định kỳ sau pha vượt Top 1
           }
           lastTop1IdRef.current = currTop1.id;
         }
 
-        // Bình luận viên tường thuật diễn biến trực tiếp mỗi 9.4 giây suốt chặng đua
-        if (liveCommentAccumRef.current >= 9.4 && currTop1) {
+        // Khi đang trả lời bình luận khán giả: giữ bộ đếm ở mức 7.0s (TẠM DỪNG tự động),
+        // để ngay sau khi MC trả lời khán giả xong (~2.4s sau) sẽ tự động tiếp tục bình luận đường đua!
+        if (isAnsweringAudience()) {
+          liveCommentAccumRef.current = Math.min(liveCommentAccumRef.current, 7.0);
+        }
+
+        // Bình luận viên tường thuật diễn biến trực tiếp mỗi 9.4 giây suốt chặng đua (chỉ chạy khi không bận trả lời khán giả)
+        if (!isAnsweringAudience() && liveCommentAccumRef.current >= 9.4 && currTop1) {
           liveCommentAccumRef.current = 0;
           const gap12 = currTop2 ? Math.max(1, Math.round(currTop1.z - currTop2.z)) : 0;
           const pct = Math.min(99, Math.max(1, Math.round((currTop1.z / totalRaceDist) * 100)));
@@ -2476,7 +2511,7 @@ export function useRaceEngine() {
                 speakOnStage: true,
               })
                 .then((res) => {
-                  if (!res.ok) {
+                  if (!res.ok && !isAnsweringAudience()) {
                     pushFeed(`🎙️ BLV: ${playByPlay}`, 'system');
                     speakCommentator(playByPlay, false);
                   }
@@ -2502,7 +2537,9 @@ export function useRaceEngine() {
       ) {
         announcedFinalLapRef.current = true;
         pushFeed(`🔥 VÒNG CUỐI (${totalLapsRef.current}/${totalLapsRef.current})! Bứt tốc về đích ngay!`, 'rocket');
-        speakCommentator('Vòng đua cuối cùng rồi! Ai sẽ bứt tốc vượt cua để cán đích đầu tiên đây!');
+        if (!isAnsweringAudience()) {
+          speakCommentator('Vòng đua cuối cùng rồi! Ai sẽ bứt tốc vượt cua để cán đích đầu tiên đây!');
+        }
       }
 
       // Đồng bộ trạng thái cuộc đua từ Bảng Điều Khiển (/) sang Màn Hình Live (/?view=stage) mỗi 0.4s
@@ -2718,7 +2755,13 @@ export function useRaceEngine() {
       } else if (action === 'chat_10') {
         for (let i = 0; i < 10; i++) {
           const u = pickRandomOrNewUser(false);
-          postTestEmit('chat', { ...u, comment: 'Chào cả nhà', isFollower: true, platform: 'tiktok' });
+          postTestEmit('chat', {
+            ...u,
+            comment: 'Chào cả nhà, cho mình vào đua với!',
+            isFollower: true,
+            skipAiReply: i > 0,
+            platform: 'tiktok',
+          });
         }
       } else if (action === 'like') {
         const u = pickRandomOrNewUser(true);
