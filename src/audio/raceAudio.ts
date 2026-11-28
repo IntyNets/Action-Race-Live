@@ -347,7 +347,7 @@ async function fetchTtsBuffer(
   signal.addEventListener('abort', onParentAbort, { once: true });
   const timer = window.setTimeout(() => timeoutCtrl.abort(), TTS_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: timeoutCtrl.signal });
+    const res = await fetch(url, { signal: timeoutCtrl.signal, cache: 'no-store' });
     if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
     return await res.arrayBuffer();
   } finally {

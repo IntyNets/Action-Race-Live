@@ -47,6 +47,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY tools ./tools
 COPY server.ts ./server.ts
+COPY hostCommentary.ts ./hostCommentary.ts
 
 EXPOSE 3002
 

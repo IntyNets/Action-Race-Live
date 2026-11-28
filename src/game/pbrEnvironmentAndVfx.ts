@@ -1036,6 +1036,7 @@ export function createPhysicalSkyAndRealTimeSystem(
 
   const update = (opts: {
     mode: TimeOfDayMode;
+    enableReflections: boolean;
     tSec: number;
     focusX: number;
     focusZ: number;
@@ -1205,10 +1206,14 @@ export function createPhysicalSkyAndRealTimeSystem(
     const cityModeChanged = lastIblCityNight !== useCityNightIbl;
 
     // Tái tạo bản đồ bức xạ môi trường IBL (PMREM PBL) ngay khi đổi sang Thành Phố hoặc khi góc mặt trời thay đổi
-    if (
-      cityModeChanged ||
-      (Math.abs(sunElevationRad - lastIblElev) > 0.045 && opts.tSec - lastIblAt > 2.5)
-    ) {
+    if (!opts.enableReflections) {
+      if (currentEnvRT) {
+        scene.environment = null;
+        currentEnvRT.dispose();
+        currentEnvRT = null;
+      }
+    } else if (!currentEnvRT || cityModeChanged ||
+      (Math.abs(sunElevationRad - lastIblElev) > 0.045 && opts.tSec - lastIblAt > 2.5)) {
       lastIblElev = sunElevationRad;
       lastIblAt = opts.tSec;
       lastIblCityNight = useCityNightIbl;

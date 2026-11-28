@@ -4,7 +4,11 @@ export type MatchPhase = 'lobby' | 'racing' | 'countdown' | 'podium';
 
 export type BoostKind = 'none' | 'join' | 'chat' | 'sprint' | 'jetpack' | 'rocket' | 'superman' | 'dragon';
 
-export type GraphicsQuality = 'low' | 'medium' | 'high';
+export type GraphicsQuality = 'low' | 'medium' | 'high' | '4k';
+
+export function isGraphicsQuality(value: unknown): value is GraphicsQuality {
+  return value === 'low' || value === 'medium' || value === 'high' || value === '4k';
+}
 
 export type TimeOfDayMode = 'realtime' | 'cycle' | 'dawn' | 'noon' | 'sunset' | 'night';
 
@@ -51,6 +55,7 @@ export interface UserProfile {
   platform: 'tiktok' | 'facebook';
   level: number;
   points: number;
+  levelResetAt?: number;
   wins: number;
   podiums: number;
   matches: number;
@@ -78,6 +83,7 @@ export interface RacerState {
   level: number;
   /** Điểm kinh nghiệm / tích lũy của người chơi */
   points: number;
+  levelResetAt?: number;
   /** Số lần vô địch */
   wins: number;
   /** Tổng số trận đã tham gia */

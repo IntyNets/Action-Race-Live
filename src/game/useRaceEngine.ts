@@ -5,6 +5,7 @@ import {
   DroneRect,
   FooterBannerConfig,
   GraphicsQuality,
+  isGraphicsQuality,
   LiveStatus,
   MatchPhase,
   MinimapDot,
@@ -175,7 +176,7 @@ export function useRaceEngine() {
   const commentIdxRef = useRef<number>(0);
   const lastJoinVoiceAtRef = useRef<number>(0);
   const [commentatorText, setCommentatorText] = useState<string>(
-    '🎙️ Chào mừng cả nhà đến với Đấu Trường Đua Tốc Độ 3D! Bình luận bất kỳ hoặc thả tim để vào sân ngay!',
+    '🎙️ Follow kênh để vào đua! Nếu đã Follow, hãy gửi một bình luận bất kỳ.',
   );
 
   const [mapId, setMapIdState] = useState<string>(getActiveMapId());
@@ -217,16 +218,17 @@ export function useRaceEngine() {
     } catch {}
     return defaultDroneRect;
   });
-  const graphicsQualityRef = useRef<GraphicsQuality>('medium');
+  const initialQuality: GraphicsQuality = navigator.hardwareConcurrency <= 4 ? 'low' : 'medium';
+  const graphicsQualityRef = useRef<GraphicsQuality>(initialQuality);
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => {
     try {
       const q = localStorage.getItem('graphicsQuality');
-      if (q === 'low' || q === 'medium' || q === 'high') {
+      if (isGraphicsQuality(q)) {
         graphicsQualityRef.current = q;
         return q;
       }
     } catch {}
-    return 'medium';
+    return initialQuality;
   });
   const timeOfDayModeRef = useRef<TimeOfDayMode>('realtime');
   const [timeOfDayMode, setTimeOfDayModeState] = useState<TimeOfDayMode>(() => {
@@ -269,7 +271,7 @@ export function useRaceEngine() {
   const webcamStatusRef = useRef<WebcamStatus>('off');
   const [webcamStatus, setWebcamStatusState] = useState<WebcamStatus>('off');
   const [liveModeStarted, setLiveModeStarted] = useState<boolean>(false);
-  const stageFpsRef = useRef<number>(60);
+  const stageFpsRef = useRef<number>(0);
   const lowFpsStreakRef = useRef<number>(0);
   const lastStageBeatAtRef = useRef<number>(0);
   const ttsTestRunningRef = useRef<boolean>(false);
@@ -382,6 +384,14 @@ export function useRaceEngine() {
     const nextMap = new Map<string, UserProfile>();
     for (const u of list) {
       if (u && u.userId) {
+        const racer = racersRef.current.get(u.userId);
+        if (racer && u.levelResetAt && u.levelResetAt !== racer.levelResetAt) {
+          racer.baseSpeed = 19.5 + (hashCode(racer.id) % 19) * 0.12;
+          racer.level = u.level;
+          racer.points = u.points;
+          racer.petSpeedBonus = u.petSpeedBonus;
+          racer.levelResetAt = u.levelResetAt;
+        }
         nextMap.set(u.userId, u);
         if (u.username) nextMap.set(u.username, u);
         if (u.isFollower) {
@@ -401,7 +411,7 @@ export function useRaceEngine() {
         if (!r || r.isBot || r.id.startsWith('bot_')) continue;
         const prev = savedUsersRef.current.get(r.id) || savedUsersRef.current.get(r.username);
         const bonus = podiumBonusMap?.get(r.id);
-        const nextPoints = Math.max(0, (r.points || prev?.points || 10) + (bonus?.addPoints || 0));
+        const nextPoints = Math.max(0, (r.points ?? prev?.points ?? 10) + (bonus?.addPoints || 0));
         const nextLevel = Math.max(1, 1 + Math.floor(nextPoints / 100));
         const nextWins = Math.max(0, (r.wins ?? prev?.wins ?? 0) + (bonus?.addWin || 0));
         const nextPodiums = Math.max(0, (prev?.podiums ?? 0) + (bonus?.addPodium || 0));
@@ -417,6 +427,7 @@ export function useRaceEngine() {
           platform: r.platform || prev?.platform || 'tiktok',
           level: nextLevel,
           points: nextPoints,
+          levelResetAt: r.levelResetAt,
           wins: nextWins,
           podiums: nextPodiums,
           matches: Math.max(1, r.matches || prev?.matches || 1),
@@ -639,6 +650,7 @@ export function useRaceEngine() {
         isBot,
         level: nextLevel,
         points: nextPoints,
+        levelResetAt: saved?.levelResetAt,
         wins: saved?.wins ?? 0,
         matches: (saved?.matches ?? 0) + 1,
         characterIdx: saved?.characterIdx ?? h % 2,
@@ -771,6 +783,7 @@ export function useRaceEngine() {
       isBot: Boolean(r.isBot),
       level: r.level || 1,
       points: r.points || 0,
+      levelResetAt: r.levelResetAt,
       wins: r.wins || 0,
       matches: r.matches || 1,
       characterIdx: r.characterIdx,
@@ -878,9 +891,7 @@ export function useRaceEngine() {
       }
     }
     if (
-      (snap.graphicsQuality === 'low' ||
-        snap.graphicsQuality === 'medium' ||
-        snap.graphicsQuality === 'high') &&
+      isGraphicsQuality(snap.graphicsQuality) &&
       snap.graphicsQuality !== graphicsQualityRef.current
     ) {
       graphicsQualityRef.current = snap.graphicsQuality;
@@ -995,7 +1006,7 @@ export function useRaceEngine() {
             playFinishFanfareSfx();
             playCrowdCheerSfx();
           } else if (snap.phase === 'lobby') {
-            speakCommentator('Mở ván đua mới! Follow kênh và nhắn join để vào sân ngay!', true, 'phase');
+            speakCommentator('Mở ván đua mới! Follow để vào đua. Đã Follow thì gửi một bình luận bất kỳ nhé!', true, 'phase');
           }
         }
         if (snap.phase === 'lobby') {
@@ -1014,6 +1025,8 @@ export function useRaceEngine() {
         if (!sr || !sr.id) continue;
         incomingIds.add(sr.id);
         const existing = map.get(sr.id);
+        const saved = savedUsersRef.current.get(sr.id);
+        const staleProgress = Boolean(saved?.levelResetAt && sr.levelResetAt !== saved.levelResetAt);
         if (!existing) {
           map.set(sr.id, {
             id: sr.id,
@@ -1022,19 +1035,20 @@ export function useRaceEngine() {
             avatar: sr.avatar || makeAvatarDataUrl(sr.nickname || 'R', sr.shirtColor || 0x3b82f6),
             platform: sr.platform || 'tiktok',
             isBot: Boolean(sr.isBot),
-            level: sr.level || 1,
-            points: sr.points || 0,
+            level: staleProgress ? saved!.level : sr.level || 1,
+            points: staleProgress ? saved!.points : sr.points || 0,
+            levelResetAt: staleProgress ? saved!.levelResetAt : sr.levelResetAt,
             wins: sr.wins || 0,
             matches: sr.matches || 1,
             characterIdx: sr.characterIdx ?? 0,
             petIdx: sr.petIdx ?? null,
             petName: sr.petName || '',
-            petSpeedBonus: sr.petSpeedBonus || 0,
+            petSpeedBonus: staleProgress ? saved!.petSpeedBonus : sr.petSpeedBonus || 0,
             z: Number(sr.z || 0),
             lap: Number(sr.lap || 1),
             x: Number(sr.x || 0),
             targetX: Number(sr.targetX || 0),
-            baseSpeed: Number(sr.baseSpeed || 20),
+            baseSpeed: staleProgress ? 19.5 + (hashCode(sr.id) % 19) * 0.12 : Number(sr.baseSpeed || 20),
             speed: Number(sr.speed || 0),
             shirtColor: Number(sr.shirtColor || 0x3b82f6),
             pantsColor: Number(sr.pantsColor || 0x1e293b),
@@ -1053,15 +1067,18 @@ export function useRaceEngine() {
         } else {
           existing.nickname = sr.nickname || existing.nickname;
           if (sr.avatar && sr.avatar.startsWith('http')) existing.avatar = sr.avatar;
-          existing.level = sr.level || existing.level;
-          existing.points = sr.points ?? existing.points;
+          if (!staleProgress) {
+            existing.level = sr.level || existing.level;
+            existing.points = sr.points ?? existing.points;
+            existing.levelResetAt = sr.levelResetAt;
+            existing.petSpeedBonus = sr.petSpeedBonus ?? existing.petSpeedBonus;
+            existing.baseSpeed = sr.baseSpeed ?? existing.baseSpeed;
+          }
           existing.wins = sr.wins ?? existing.wins;
           existing.characterIdx = sr.characterIdx ?? existing.characterIdx;
           existing.petIdx = sr.petIdx ?? existing.petIdx;
           existing.petName = sr.petName ?? existing.petName;
-          existing.petSpeedBonus = sr.petSpeedBonus ?? existing.petSpeedBonus;
           existing.shirtColor = sr.shirtColor ?? existing.shirtColor;
-          existing.baseSpeed = sr.baseSpeed ?? existing.baseSpeed;
           existing.speed = sr.speed ?? existing.speed;
           existing.targetX = sr.targetX ?? existing.targetX;
           existing.lap = sr.lap ?? existing.lap;
@@ -1168,11 +1185,11 @@ export function useRaceEngine() {
 
       stopNonCriticalCommentator();
       pushFeed(
-        `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Follow kênh & nhắn "join" để vào đường đua!`,
+        `🚦 Ván mới #${matchNoRef.current} (${totalLapsRef.current} vòng)! Follow để vào đua, hoặc bình luận bất kỳ nếu đã Follow.`,
         'system',
       );
       speakCommentator(
-        `Mở ván ${matchNoRef.current}! Follow kênh và nhắn join để vào đua ngay nào!`,
+        `Mở ván ${matchNoRef.current}! Follow để vào đua. Đã Follow thì gửi một bình luận bất kỳ nhé!`,
         true,
         'phase',
       );
@@ -1309,7 +1326,12 @@ export function useRaceEngine() {
         return;
       }
 
-      playJoinSfx();
+      if (phaseRef.current === 'podium') {
+        queueForNextRound({ ...payload, coins: 0 });
+        pushFeed(`➕ ${payload.nickname} đã Follow và sẽ vào ván kế tiếp.`, 'join');
+        return;
+      }
+
       pushFeed(
         `➕ ${payload.nickname} vừa Follow kênh & tự động vào đường đua ngay!`,
         'join',
@@ -1320,17 +1342,6 @@ export function useRaceEngine() {
         speakCommentator(
           `Cảm ơn bạn ${payload.nickname} đã Follow kênh! Nhân vật của bạn đã chính thức vào đường đua rồi nhé!`,
         );
-      }
-
-      if (phaseRef.current === 'podium') {
-        queueForNextRound({
-          userId: payload.userId,
-          username: payload.username,
-          nickname: payload.nickname,
-          avatar: payload.avatar,
-          coins: 0,
-        });
-        return;
       }
 
       ensureRacer(
@@ -1830,7 +1841,7 @@ export function useRaceEngine() {
           setDroneRectState(value as DroneRect);
         } else if (
           action === 'setGraphicsQuality' &&
-          (value === 'low' || value === 'medium' || value === 'high')
+          isGraphicsQuality(value)
         ) {
           graphicsQualityRef.current = value;
           setGraphicsQualityState(value);
@@ -1938,6 +1949,9 @@ export function useRaceEngine() {
         setStageOnline(true);
       } else if (type === 'ttsTestResult' && data && !IS_STAGE) {
         setTtsTestResult(data as TtsTestResult);
+      } else if (type === 'hostReply' && typeof data.text === 'string') {
+        pushFeed(`🎙️ ${data.text}`, 'system');
+        if (IS_STAGE) speakCommentator(data.text);
       } else if (type === 'chat') {
         handleChat({
           userId: String(data.userId || data.username || data.nickname || 'viewer'),
@@ -1973,7 +1987,7 @@ export function useRaceEngine() {
             username: uname,
             nickname: nick || 'Chủ phòng',
             avatar: String(data.avatar || ''),
-            comment: 'join',
+            comment: 'Vào đua',
             isFollower: true,
             platform: data.platform === 'facebook' ? 'facebook' : 'tiktok',
           });
@@ -2054,6 +2068,7 @@ export function useRaceEngine() {
           'ttsTestResult',
           'control',
           'chat',
+          'hostReply',
           'member',
           'follow',
           'share',
@@ -2127,7 +2142,7 @@ export function useRaceEngine() {
 
   const stepPhysics = useCallback(
     (dt: number) => {
-      const clampedDt = Math.min(dt, 0.05);
+      const clampedDt = Math.min(dt, 0.1);
       const now = performance.now();
       const map = racersRef.current;
       const totalRaceDist = RACE_CONSTANTS.LAP_LENGTH * totalLapsRef.current;
@@ -2254,7 +2269,7 @@ export function useRaceEngine() {
         const hypeLobby =
           countNow > 0
             ? `Chỉ còn 7 giây nữa là xuất phát! Đã có ${countNow} tay đua sẵn sàng, cả nhà mau bình luận thêm để nhảy vào vạch xuất phát nào!`
-            : `Sắp xuất phát rồi cả nhà ơi! Gõ phím bình luận bất kỳ hoặc thả tim để nhân vật của bạn vào đường đua ngay!`;
+            : 'Sắp xuất phát rồi! Follow để vào đua. Nếu đã Follow, hãy gửi một bình luận bất kỳ!';
         pushFeed(`🎙️ ${hypeLobby}`, 'system');
         speakCommentator(hypeLobby);
       }
@@ -2519,7 +2534,7 @@ export function useRaceEngine() {
   }, []);
 
   const postTestEmit = useCallback(
-    (type: 'chat' | 'like' | 'gift', data: Record<string, unknown>) => {
+    (type: 'chat' | 'follow' | 'like' | 'gift', data: Record<string, unknown>) => {
       void fetch('/api/test/emit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2532,7 +2547,7 @@ export function useRaceEngine() {
   const triggerMock = useCallback(
     (
       action:
-        | 'chat_new'
+        | 'follow_new'
         | 'chat_10'
         | 'like'
         | 'gift_small'
@@ -2542,13 +2557,13 @@ export function useRaceEngine() {
         | 'fb_chat'
         | 'fb_stars',
     ) => {
-      if (action === 'chat_new') {
+      if (action === 'follow_new') {
         const u = pickRandomOrNewUser(false);
-        postTestEmit('chat', { ...u, comment: 'join', isFollower: true, platform: 'tiktok' });
+        postTestEmit('follow', { ...u, isFollower: true, platform: 'tiktok' });
       } else if (action === 'chat_10') {
         for (let i = 0; i < 10; i++) {
           const u = pickRandomOrNewUser(false);
-          postTestEmit('chat', { ...u, comment: 'join', isFollower: true, platform: 'tiktok' });
+          postTestEmit('chat', { ...u, comment: 'Chào cả nhà', isFollower: true, platform: 'tiktok' });
         }
       } else if (action === 'like') {
         const u = pickRandomOrNewUser(true);
@@ -2571,7 +2586,7 @@ export function useRaceEngine() {
           ...u,
           userId: `fb_${u.userId}`,
           username: `fb_${u.username}`,
-          comment: 'join',
+          comment: 'Chào cả nhà',
           isFollower: true,
           platform: 'facebook',
         });

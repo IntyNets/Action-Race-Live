@@ -16,6 +16,10 @@ services:
       - HOST=0.0.0.0
       - PORT=3002
       - TTS_VOICE=${TTS_VOICE:-vi-VN-HoaiMyNeural}
+      - RACE_HOST_TOKEN=${RACE_HOST_TOKEN:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
       - USERS_FILE=/app/data/users.json
     volumes:
       # Lưu trữ bền vững toàn bộ Hồ sơ Người chơi (Cấp độ, Điểm, Đặc điểm nhân vật, Thú cưng VIP)

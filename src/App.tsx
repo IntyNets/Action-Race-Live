@@ -21,6 +21,7 @@ import { setAudioSettings } from './audio/raceAudio';
 import { CIRCUIT_TRACK, MAPS, getMapLapKm } from './game/trackCurve';
 import { DEFAULT_FOOTER_BANNER } from './game/raceTypes';
 import { HostWebcamPip } from './live/HostWebcamPip';
+import { hostAuthorization, RaceHostPanel } from './live/RaceHostPanel';
 import {
   BROADCAST_OUTPUT_MODES,
   buildStageUrl,
@@ -141,6 +142,9 @@ export default function App() {
   const [copiedBridge, setCopiedBridge] = useState(false);
   const [connMsg, setConnMsg] = useState('');
   const [quickJoinName, setQuickJoinName] = useState('');
+  const [playerSearch, setPlayerSearch] = useState('');
+  const [resettingPlayer, setResettingPlayer] = useState('');
+  const [playerMessage, setPlayerMessage] = useState('');
   const [customSpeakInput, setCustomSpeakInput] = useState('');
   const [bgmOn, setBgmOn] = useState(true);
   const [sfxOn, setSfxOn] = useState(true);
@@ -148,6 +152,30 @@ export default function App() {
   const [copiedLink, setCopiedLink] = useState(false);
 
   const fb = liveStatus.fb;
+  const playerQuery = playerSearch.trim().toLowerCase();
+  const visibleProfiles = useMemo(() => savedUsers.filter((player) =>
+    !playerQuery || `${player.nickname} ${player.username} ${player.userId}`.toLowerCase().includes(playerQuery),
+  ).slice(0, 30), [savedUsers, playerQuery]);
+
+  const resetPlayerLevel = async (player: { userId: string; nickname: string }) => {
+    if (!window.confirm(`Đặt ${player.nickname} về cấp 1 và 0 XP?`)) return;
+    setResettingPlayer(player.userId);
+    setPlayerMessage('');
+    try {
+      const response = await fetch('/api/users/reset-level', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...hostAuthorization() },
+        body: JSON.stringify({ userId: player.userId }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Không đặt lại được cấp độ.');
+      setPlayerMessage(`${player.nickname} đã về cấp 1 và 0 XP.`);
+    } catch (error) {
+      setPlayerMessage(error instanceof Error ? error.message : 'Không đặt lại được cấp độ.');
+    } finally {
+      setResettingPlayer('');
+    }
+  };
 
   const switchPlatform = (p: 'tiktok' | 'facebook') => {
     setPlatformTab(p);
@@ -324,7 +352,7 @@ export default function App() {
     lobby: {
       label: '🚦 CHỜ VÀO ĐUA',
       badge: 'bg-sky-500/90 text-white',
-      sub: `Bình luận bất kỳ để xuất phát (${totalLaps} vòng uốn lượn)!`,
+      sub: 'Follow để vào đua. Đã Follow thì gửi một bình luận bất kỳ.',
     },
     racing: {
       label: `🔥 VÒNG ${leaderLap}/${totalLaps}`,
@@ -1679,7 +1707,7 @@ export default function App() {
                 </div>
                 <ul className="text-[11px] text-slate-300 space-y-1 list-disc list-inside leading-relaxed">
                   <li>
-                    <b>Cách 1 (Khán giả trên TikTok / Facebook Live):</b> Người chơi mới cần <b>Follow kênh ➕</b> và nhắn <code>join</code> để vào đường đua! Người chơi <b>đã Follow trước đó</b> chỉ cần nhắn <code>join</code> là vào đua ngay (tự động khôi phục Cấp độ, Điểm & Thú cưng VIP đã lưu).
+                    <b>TikTok:</b> Bấm <b>Follow</b> để vào đua ngay. Nếu đã Follow, gửi một bình luận bất kỳ. <b>Facebook Live:</b> Gửi một bình luận để vào đua.
                   </li>
                   <li>
                     <b>Cách 2 (Chủ phòng / Thêm tay đua thủ công):</b> Khi bấm <b>Kết nối TikTok</b>, nhân vật của chủ kênh tự động vào sân. Hoặc gõ tên bất kỳ vào ô dưới đây để cho vào đua ngay:
@@ -1703,7 +1731,7 @@ export default function App() {
                               userId: uid,
                               username: uid,
                               nickname: name,
-                              comment: 'join',
+                              comment: 'Vào đua',
                               isFollower: true,
                               platform: platformTab,
                             },
@@ -1729,7 +1757,7 @@ export default function App() {
                             userId: uid,
                             username: uid,
                             nickname: raw,
-                            comment: 'join',
+                            comment: 'Vào đua',
                             isFollower: true,
                             platform: platformTab,
                           },
@@ -2040,23 +2068,28 @@ export default function App() {
                   </span>
                   <span className="text-[10px] text-slate-400">Đồng bộ trực tiếp sang Live</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-[11px] font-black">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px] font-black">
                   {(
                     [
                       {
                         id: 'low',
                         label: '⚡ Thấp (Nhẹ máy)',
-                        desc: 'Tắt bóng đổ · Địa hình gọn · Tối đa FPS',
+                        desc: '30 fps · 28 tay đua hiển thị · Tắt bóng và drone',
                       },
                       {
                         id: 'medium',
                         label: '⚖️ Trung Bình',
-                        desc: 'Texture 2K PBR · Bóng thật 2048px',
+                        desc: '44 tay đua hiển thị · Bóng 1024px',
                       },
                       {
                         id: 'high',
-                        label: '✨ Cao (Ultra PBR)',
-                        desc: 'Texture 2K PBR · Bóng siêu nét 4096px',
+                        label: '✨ Cao',
+                        desc: '60 tay đua hiển thị · Bóng 2048px',
+                      },
+                      {
+                        id: '4k',
+                        label: '4K UHD',
+                        desc: 'Canvas đến 2160 × 3840 ở Stage dọc · Bóng 4096px',
                       },
                     ] as const
                   ).map((q) => {
@@ -2200,10 +2233,10 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-bold">
                 <button
-                  onClick={() => triggerMock('chat_new')}
+                  onClick={() => triggerMock('follow_new')}
                   className="py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 transition"
                 >
-                  🎵 +1 Chat TikTok
+                  🎵 +1 Follow TikTok
                 </button>
                 <button
                   onClick={() => triggerMock('fb_chat')}
@@ -2266,10 +2299,15 @@ export default function App() {
                   </h2>
                   <p className="text-[11px] text-slate-400">
                     Lưu bền vững Cấp độ, Điểm XP, Số trận thắng, Đặc điểm nhân vật NotBlox & Thú cưng VIP vào{' '}
-                    <code className="text-sky-300">data/users.json</code>. Khi join lại chỉ cần load lại thông tin!
+                    <code className="text-sky-300">data/users.json</code>. Đặt lại cấp độ sẽ đưa XP về 0 và giữ thành tích, nhân vật, thú cưng.
                   </p>
                 </div>
               </div>
+
+              {savedUsers.length > 0 && <input type="search" aria-label="Tìm tay đua" value={playerSearch}
+                onChange={(event) => setPlayerSearch(event.target.value)} placeholder="Tìm tay đua theo tên hoặc ID"
+                className="rounded-lg border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white" />}
+              {playerMessage && <p className="text-xs text-amber-200" role="status">{playerMessage}</p>}
 
               {savedUsers.length === 0 ? (
                 <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3 text-center text-xs text-slate-400">
@@ -2277,7 +2315,8 @@ export default function App() {
                 </div>
               ) : (
                 <div className="max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/70 divide-y divide-white/10">
-                  {savedUsers.slice(0, 30).map((u, idx) => {
+                  {visibleProfiles.length === 0 && <p className="p-3 text-xs text-slate-400">Không tìm thấy tay đua.</p>}
+                  {visibleProfiles.map((u, idx) => {
                     const shirtHex = '#' + (u.shirtColor || 0x3b82f6).toString(16).padStart(6, '0');
                     return (
                       <div
@@ -2331,6 +2370,7 @@ export default function App() {
                           </div>
                         </div>
 
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
                         <button
                           onClick={() => {
                             void fetch('/api/test/emit', {
@@ -2344,23 +2384,31 @@ export default function App() {
                                   nickname: u.nickname,
                                   avatar: u.avatar,
                                   platform: u.platform,
-                                  comment: 'join',
+                                  comment: 'Vào đua',
                                   isFollower: true,
                                 },
                               }),
                             });
                           }}
                           className="shrink-0 px-2.5 py-1 rounded-lg bg-sky-600/90 hover:bg-sky-500 text-[11px] font-black text-white transition"
-                          title="Cho người chơi này join lại đường đua với toàn bộ cấp độ, trang phục và thú cưng đã lưu"
+                          title="Đưa tay đua trở lại với hồ sơ đã lưu"
                         >
                           ⚡ Vào đua lại
                         </button>
+                        <button type="button" disabled={Boolean(resettingPlayer) || u.points === 0}
+                          onClick={() => void resetPlayerLevel(u)}
+                          className="rounded-lg border border-rose-400/40 px-2.5 py-1 text-[11px] text-rose-200 hover:bg-rose-950 disabled:opacity-40">
+                          {resettingPlayer === u.userId ? 'Đang đặt lại…' : 'Đặt lại cấp độ'}
+                        </button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
             </section>
+
+            <RaceHostPanel />
 
             {/* 5. Điều khiển Âm Thanh & Bình Luận Viên Thể Thao Trực Tiếp */}
             <section className="rounded-2xl bg-slate-900/90 border border-white/10 p-4 flex flex-col gap-3">
@@ -2446,7 +2494,7 @@ export default function App() {
                     type="button"
                     onClick={() =>
                       speakCustom(
-                        'Ai chưa vào sân thì gõ ngay phím 1 hoặc bình luận bất kỳ để xuất hiện nhân vật đua cùng cả nhà nhé!',
+                        'Bấm Follow để vào đường đua cùng cả nhà. Nếu đã Follow, hãy gửi một bình luận bất kỳ nhé!',
                       )
                     }
                     className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 transition"

@@ -1,5 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import { createHostCommentary } from './hostCommentary.ts';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
@@ -62,6 +63,7 @@ export interface StoredUserProfile {
   platform: 'tiktok' | 'facebook';
   level: number;
   points: number;
+  levelResetAt?: number;
   wins: number;
   podiums: number;
   matches: number;
@@ -87,6 +89,12 @@ function resolveUsersFilePath(): string {
   } catch {}
   return RAW_USERS_FILE;
 }
+
+const hostCommentary = createHostCommentary(
+  path.join(path.dirname(resolveUsersFilePath()), 'host-commentary.json'),
+  (text) => broadcastWs('hostReply', { text }),
+);
+app.use('/api/host', hostCommentary.router);
 
 let usersStore: Record<string, StoredUserProfile> = {};
 const knownFollowers = new Set<string>();
@@ -120,14 +128,20 @@ function markFollower(userId: string) {
 }
 
 let saveUsersTimer: ReturnType<typeof setTimeout> | null = null;
+function writeUsersStore() {
+  const filename = resolveUsersFilePath();
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const temporary = `${filename}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(usersStore, null, 2), 'utf8');
+  fs.renameSync(temporary, filename);
+}
+
 function scheduleSaveUsers() {
   if (saveUsersTimer) return;
   saveUsersTimer = setTimeout(() => {
     saveUsersTimer = null;
     try {
-      const fp = resolveUsersFilePath();
-      fs.mkdirSync(path.dirname(fp), { recursive: true });
-      fs.writeFileSync(fp, JSON.stringify(usersStore, null, 2), 'utf8');
+      writeUsersStore();
     } catch (err) {
       console.error('Không lưu được users.json:', err);
     }
@@ -238,6 +252,11 @@ function broadcastWs(type: string, data: unknown) {
       } catch {}
     }
   }
+}
+
+function broadcastAudienceChat(data: Parameters<typeof hostCommentary.replyToComment>[0]) {
+  broadcastWs('chat', data);
+  if (sseClients.length || wsClients.size) void hostCommentary.replyToComment(data);
 }
 
 app.get('/api/tiktok/events', (req, res) => {
@@ -364,6 +383,27 @@ app.get('/api/users', (_req, res) => {
   });
 });
 
+app.post('/api/users/reset-level', hostCommentary.authorize, (req, res) => {
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+  if (!userId || !Object.hasOwn(usersStore, userId)) {
+    return res.status(404).json({ success: false, error: 'Không tìm thấy hồ sơ tay đua.' });
+  }
+  const previous = usersStore[userId];
+  const now = Date.now();
+  const profile = { ...previous, points: 0, level: 1,
+    petSpeedBonus: previous.petIdx == null ? 0 : previous.petSpeedBonus,
+    levelResetAt: Math.max(now, (previous.levelResetAt || 0) + 1), updatedAt: now };
+  usersStore[userId] = profile;
+  try {
+    writeUsersStore();
+  } catch {
+    usersStore[userId] = previous;
+    return res.status(500).json({ success: false, error: 'Không lưu được cấp độ mới.' });
+  }
+  broadcastWs('users', getSortedUsersList());
+  res.json({ success: true, data: profile });
+});
+
 app.post('/api/users/sync', (req, res) => {
   const rawList = Array.isArray(req.body?.users)
     ? req.body.users
@@ -378,6 +418,7 @@ app.post('/api/users/sync', (req, res) => {
     if (!userId || userId.startsWith('bot_')) continue;
 
     const existing = usersStore[userId];
+    if (existing?.levelResetAt && item.levelResetAt !== existing.levelResetAt) continue;
     const points = Math.max(0, Number(item.points ?? existing?.points ?? 0));
     const level = computeLevel(points);
     const petIdx =
@@ -405,6 +446,7 @@ app.post('/api/users/sync', (req, res) => {
       platform: item.platform === 'facebook' ? 'facebook' : existing?.platform || 'tiktok',
       level,
       points,
+      levelResetAt: existing?.levelResetAt,
       wins: Math.max(0, Number(item.wins ?? existing?.wins ?? 0)),
       podiums: Math.max(0, Number(item.podiums ?? existing?.podiums ?? 0)),
       matches: Math.max(1, Number(item.matches ?? existing?.matches ?? 1)),
@@ -565,7 +607,7 @@ app.post('/api/tiktok/connect', async (req, res) => {
   conn.on(WebcastEvent.CHAT, (data: any) => {
     const username = userOf(data);
     const isFollower = isFollowerOf(data, username);
-    broadcastWs('chat', {
+    broadcastAudienceChat({
       userId: username,
       username,
       nickname: nickOf(data),
@@ -914,7 +956,7 @@ function handleFbComment(item: {
 
   if (commentText || (isLikeAction && parsedGift.coins <= 0)) {
     liveStatus.fb.commentsReceived += 1;
-    broadcastWs('chat', {
+    broadcastAudienceChat({
       userId: username,
       username,
       nickname,
@@ -1605,17 +1647,36 @@ async function googleTtsFallback(text: string): Promise<Buffer> {
 }
 
 const ttsCache = new Map<string, Buffer>();
+function cacheTts(key: string, audio: Buffer) {
+  if (ttsCache.size >= 160) ttsCache.delete(ttsCache.keys().next().value!);
+  ttsCache.set(key, audio);
+}
+
 app.get('/api/tts', async (req, res) => {
   const text = String(req.query.text || '').trim().slice(0, 320);
   const voiceParam = String(req.query.voice || '').toLowerCase();
+  const voiceMode = hostCommentary.voice();
   const voiceName =
-    voiceParam === 'm' || voiceParam === 'namminh'
+    voiceMode === 'male' || (voiceMode !== 'female' && (voiceParam === 'm' || voiceParam === 'namminh'))
       ? 'vi-VN-NamMinhNeural'
-      : voiceParam === 'f' || voiceParam === 'hoaimy'
+      : voiceMode === 'female' || voiceParam === 'f' || voiceParam === 'hoaimy'
         ? 'vi-VN-HoaiMyNeural'
         : String(process.env.TTS_VOICE || 'vi-VN-NamMinhNeural');
   const hype = req.query.hype === '1';
   if (!text) return res.status(400).end();
+  res.setHeader('Cache-Control', 'no-store');
+
+  const customVoiceId = hostCommentary.voiceId();
+  if (customVoiceId) {
+    const key = `custom|${customVoiceId}|${text}`;
+    const customAudio = ttsCache.get(key) || await hostCommentary.synthesize(text, customVoiceId);
+    if (customAudio) {
+      if (!ttsCache.has(key)) cacheTts(key, customAudio);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      return res.send(customAudio);
+    }
+    res.setHeader('X-Race-Voice', 'fallback');
+  }
 
   const cacheKey = `${voiceName}|${hype ? '1' : '0'}|${text}`;
   const cached = ttsCache.get(cacheKey);
@@ -1652,13 +1713,8 @@ app.get('/api/tts', async (req, res) => {
       buf = await googleTtsFallback(text);
     }
 
-    if (ttsCache.size > 160) {
-      const firstKey = ttsCache.keys().next().value;
-      if (firstKey) ttsCache.delete(firstKey);
-    }
-    ttsCache.set(cacheKey, buf);
+    cacheTts(cacheKey, buf);
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(buf);
   } catch {
     res.status(502).end();

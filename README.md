@@ -18,6 +18,24 @@ Game đua tốc độ 3D tương tác trực tiếp **Đa Nền Tảng (TikTok L
   - Máy quay truyền hình tự động bám đoàn đua mượt mà qua mọi khúc cua, tự động chuyển cảnh Spotlight khi có người tặng quà / vượt Top 1, kèm hiệu ứng tia sét Speed-Force kiểu *The Flash*.
   - Khung **🚁 Drone Toàn Cảnh (PiP)** ở góc phải dưới hiển thị vị trí toàn bộ người chơi trên sân theo thời gian thực.
 
+## Vào đua, đồ họa và MC
+
+- **TikTok**: Follow trong phiên live để vào đua ngay. Người đã Follow gửi bình luận bất kỳ khi TikTok trả trạng thái Follow hoặc game đã ghi nhận trước đó. **Facebook Live** nhận người chơi qua bình luận vì nguồn bình luận hiện tại không có trạng thái Follow.
+- **Thấp** đặt mục tiêu 30 fps, giảm độ phân giải nội bộ, số tay đua hiển thị và tắt bóng/drone. **4K UHD** dựng canvas đến 2160 × 3840 ở Stage dọc nếu GPU hỗ trợ. Phần mềm hoặc bộ phát cũng cần cấu hình đầu ra 4K để khán giả nhận được độ phân giải đó.
+- Trong **Hồ sơ người chơi**, tìm tay đua và chọn **Đặt lại cấp độ** để đưa về cấp 1, 0 XP. Thắng, số trận, trang phục và thú cưng được giữ.
+
+### MC AI và giọng riêng
+
+Thiết lập các biến sau trong `.env` của bản Docker độc lập, rồi tạo lại dịch vụ. Với phòng CPanel, khai báo các biến trong môi trường của container game.
+
+```dotenv
+RACE_HOST_TOKEN=<khóa-ngẫu-nhiên-tối-thiểu-16-ký-tự>
+GROQ_API_KEY=<khóa-Groq>
+ELEVENLABS_API_KEY=<khóa-ElevenLabs>
+```
+
+Trong **MC AI và giọng nói**, nhập khóa điều khiển MC và bật AI để phản hồi một số bình luận TikTok/Facebook bằng tiếng Việt. Giọng Nam Minh và Hoài My dùng được với TTS tích hợp. Với giọng riêng, nhập Voice ID trong tài khoản ElevenLabs hoặc chọn bản ghi hợp lệ dưới 10 MB rồi bấm **Tạo và dùng giọng này**. Mẫu được gửi tới ElevenLabs, còn game lưu tùy chọn và Voice ID trong `data/host-commentary.json`. Stage dùng giọng đã lưu cho cả MC thường và MC AI.
+
 ## Chạy Production trên VPS bằng Docker Compose
 ```bash
 docker compose -f docker-compose.prod.yml pull

@@ -142,7 +142,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
   const speedLinesRef = useRef<HTMLDivElement | null>(null);
   const [badges, setBadges] = useState<LabelBadgeInfo[]>([]);
   const [droneTags, setDroneTags] = useState<DroneTagInfo[]>([]);
-  const [fps, setFps] = useState<number>(60);
+  const [fps, setFps] = useState<number>(0);
   const [loadedModelsCount, setLoadedModelsCount] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
@@ -214,12 +214,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const dynamicImport = new Function('specifier', 'return import(specifier)') as (
           s: string,
         ) => Promise<any>;
-        const [THREE, gltfMod, dracoMod, skelMod, roomEnvMod, skyMod] = await Promise.all([
+        const [THREE, gltfMod, dracoMod, skelMod, skyMod] = await Promise.all([
           dynamicImport('three'),
           dynamicImport('three/addons/loaders/GLTFLoader.js'),
           dynamicImport('three/addons/loaders/DRACOLoader.js'),
           dynamicImport('three/addons/utils/SkeletonUtils.js'),
-          dynamicImport('three/addons/environments/RoomEnvironment.js'),
           dynamicImport('three/addons/objects/Sky.js'),
         ]);
         if (cancelled) return;
@@ -227,16 +226,30 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         const { GLTFLoader } = gltfMod;
         const { DRACOLoader } = dracoMod;
         const SkeletonUtils = skelMod;
-        const { RoomEnvironment } = roomEnvMod;
         const { Sky } = skyMod;
 
         // ---------- Renderer + PBR/PBS/PBL + Đổ Bóng Độ Phân Giải Cao (PCFSoftShadowMap) ----------
         const renderer = new THREE.WebGLRenderer({
-          antialias: true,
+          antialias: false,
           powerPreference: 'high-performance',
         });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.4));
-        renderer.setSize(container.clientWidth || 540, container.clientHeight || 960);
+        const gl = renderer.getContext();
+        const maxBufferSide = Math.min(renderer.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+        const resizeDrawingBuffer = () => {
+          const width = container.clientWidth || 540;
+          const height = container.clientHeight || 960;
+          const longSide = Math.max(width, height);
+          const shortSide = Math.min(width, height);
+          const quality = graphicsQualityRef.current;
+          const dpr = window.devicePixelRatio || 1;
+          const scale = quality === '4k' ? Math.min(3840 / longSide, 2160 / shortSide) :
+            quality === 'high' ? Math.min(dpr, 1.6, 2560 / longSide) :
+            quality === 'medium' ? Math.min(dpr, 1.15, 1440 / longSide) : Math.min(dpr, 0.85, 854 / longSide);
+          renderer.setDrawingBufferSize(width, height, Math.min(scale, maxBufferSide / longSide));
+          renderer.domElement.style.width = '100%';
+          renderer.domElement.style.height = '100%';
+        };
+        resizeDrawingBuffer();
         renderer.shadowMap.enabled = graphicsQualityRef.current !== 'low';
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -251,9 +264,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         scene.fog = new THREE.FogExp2(0xcbd5e1, 0.0028);
 
         const pmrem = new THREE.PMREMGenerator(renderer);
-        pmrem.compileEquirectangularShader?.();
-        const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-        scene.environment = envTex;
 
         const camera = new THREE.PerspectiveCamera(
           52,
@@ -287,8 +297,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         sunLight.position.set(28, 76, -22);
         sunLight.castShadow = graphicsQualityRef.current !== 'low';
         sunLight.shadow.mapSize.set(
-          graphicsQualityRef.current === 'high' ? 4096 : 2048,
-          graphicsQualityRef.current === 'high' ? 4096 : 2048,
+          1024,
+          1024,
         );
         sunLight.shadow.camera.near = 4;
         sunLight.shadow.camera.far = 195;
@@ -891,12 +901,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
         const applyGraphicsQualitySettings = (q: GraphicsQuality) => {
           const isLow = q === 'low';
-          const isHigh = q === 'high';
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isHigh ? 1.55 : isLow ? 1.0 : 1.3));
+          resizeDrawingBuffer();
           renderer.shadowMap.enabled = !isLow;
           sunLight.castShadow = !isLow;
-          // Độ phân giải Shadow Map siêu nét: 4096x4096 ở mức Cao, 2048x2048 ở mức Trung bình
-          const targetMapSize = isHigh ? 4096 : 2048;
+          const targetMapSize = q === '4k' ? 4096 : q === 'high' ? 2048 : 1024;
           if (sunLight.shadow.mapSize.width !== targetMapSize) {
             sunLight.shadow.mapSize.set(targetMapSize, targetMapSize);
             if (sunLight.shadow.map) {
@@ -933,8 +941,9 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           );
           cloudAnchor.position.set(cx, 0, cz);
 
-          const quality = graphicsQualityRef.current;
-          applyGraphicsQualitySettings(quality);
+          const selectedQuality = graphicsQualityRef.current;
+          const quality = selectedQuality === '4k' ? 'high' : selectedQuality;
+          applyGraphicsQualitySettings(selectedQuality);
           const enableWorldShadows = quality !== 'low';
 
           // Tính bán kính hồ nước trước để giữ lòng hồ & hành lang đường đua phẳng tuyệt đối trên lưới địa hình Triangle
@@ -3130,28 +3139,36 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const h = container.clientHeight || 960;
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
-          renderer.setSize(w, h);
+          resizeDrawingBuffer();
         };
         const ro = new ResizeObserver(handleResize);
         ro.observe(container);
 
         // ---------- 7. Render Loop 60 FPS + Camera Chuyển Đổi Siêu Mượt ----------
         let lastTime = performance.now();
+        let nextDrawAt = lastTime;
         let fpsFrames = 0;
         let fpsAccum = 0;
         let lastBadgeSig = '';
         let fireworkTimer = 0;
+        let windOpacity = 0;
         const projVec = new THREE.Vector3();
 
         const animate = (now: number) => {
           if (cancelled) return;
           rafId = requestAnimationFrame(animate);
 
-          const dt = Math.min((now - lastTime) / 1000, 0.05);
+          const isLow = graphicsQualityRef.current === 'low';
+          const isMedium = graphicsQualityRef.current === 'medium';
+          const interval = 1000 / (isLow ? 30 : 60);
+          if (now + 0.5 < nextDrawAt) return;
+          nextDrawAt = Math.max(now, nextDrawAt + interval);
+          const elapsed = (now - lastTime) / 1000;
+          const dt = Math.min(elapsed, 0.1);
           lastTime = now;
 
           fpsFrames++;
-          fpsAccum += dt;
+          fpsAccum += elapsed;
           if (fpsAccum >= 1.0) {
             const measuredFps = Math.round(fpsFrames / fpsAccum);
             setFps(measuredFps);
@@ -3167,15 +3184,17 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const allRacers = Array.from(racersRef.current.values());
           allRacers.sort((a, b) => a.rank - b.rank);
 
+          const visibleLimit = isLow ? 28 : isMedium ? 44 : RACE_CONSTANTS.MAX_RENDERED_RACERS;
           let visibleRacers: RacerState[];
-          if (allRacers.length <= RACE_CONSTANTS.MAX_RENDERED_RACERS) {
+          if (allRacers.length <= visibleLimit) {
             visibleRacers = allRacers;
           } else {
-            const topPart = allRacers.slice(0, 35);
+            const leaders = Math.ceil(visibleLimit * 0.58);
+            const topPart = allRacers.slice(0, leaders);
             const rest = allRacers
-              .slice(35)
+              .slice(leaders)
               .sort((a, b) => b.lastInteractAt - a.lastInteractAt)
-              .slice(0, RACE_CONSTANTS.MAX_RENDERED_RACERS - 35);
+              .slice(0, visibleLimit - leaders);
             visibleRacers = [...topPart, ...rest];
           }
 
@@ -3187,9 +3206,8 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
             item.mesh.rotation.y = tSec * 0.22 + item.phase;
           }
 
-          // Cập nhật khán giả đứng xem & cổ vũ dọc 2 bên đường đua (bao gồm các user mới vào chưa nhắn join!)
-          const realSpecs = spectatorsRef ? Array.from(spectatorsRef.current.values()) : [];
-          const activeSpecCount = Math.min(spectatorPool.length, Math.max(12, realSpecs.length));
+          const realSpecs = !isLow && spectatorsRef ? Array.from(spectatorsRef.current.values()) : [];
+          const activeSpecCount = isLow ? 0 : Math.min(spectatorPool.length, Math.max(12, realSpecs.length));
           for (let sp = 0; sp < spectatorPool.length; sp++) {
             const sSlot = spectatorPool[sp];
             const showSpec = phase !== 'podium' && sp < activeSpecCount;
@@ -3424,7 +3442,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
 
             const hasBoost = r.boost !== 'none';
             // Hiệu ứng Sóng Xung Kích Tốc Độ (Sonic Slipstream Rings) xé gió quanh nhân vật khi tăng tốc
-            const showSonic = hasBoost && (phase === 'racing' || phase === 'countdown') && i < 20;
+            const showSonic = hasBoost && (phase === 'racing' || phase === 'countdown') && i < (isLow ? 8 : 20);
             slot.sonicSpeedGrp.visible = showSonic;
             if (showSonic) {
               const sonicBaseY = isDragon
@@ -3929,8 +3947,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           const showWind3D =
             (phase === 'racing' || phase === 'countdown') &&
             focusBoost !== 'none';
-          windStreaksGroup.visible = showWind3D;
-          if (showWind3D) {
+          const targetWindOpacity = showWind3D ? (focusBoost === 'dragon' || focusBoost === 'rocket' ? 0.78 : 0.52) : 0;
+          windOpacity += (targetWindOpacity - windOpacity) * (1 - Math.exp(-10 * dt));
+          windStreaksGroup.visible = windOpacity > 0.015;
+          if (windStreaksGroup.visible) {
             const boostMult =
               focusBoost === 'dragon'
                 ? 2.2
@@ -3939,10 +3959,11 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
                   : focusBoost === 'jetpack'
                     ? 1.5
                     : 1.15;
-            windStreakMat.opacity =
-              focusBoost === 'dragon' || focusBoost === 'rocket' ? 0.78 : 0.52;
+            windStreakMat.opacity = windOpacity;
             for (let ws = 0; ws < windStreaks.length; ws++) {
               const st = windStreaks[ws];
+              st.mesh.visible = !isLow || ws < 12;
+              if (!st.mesh.visible) continue;
               st.z += st.spd * boostMult * dt;
               if (st.z > 2) {
                 st.z = -36 - (ws % 6) * 2.5;
@@ -3964,6 +3985,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           // Map Thành Phố Về Đêm mặc định giữ bầu trời đêm rực sáng đèn phố & đường dầu phản chiếu khi ở chế độ 'realtime'
           const activeScenery = getActiveMap().theme.sceneryType;
           realTimeSky.update({
+            enableReflections: !isLow,
             mode: timeOfDayModeRef.current,
             tSec,
             focusX: camPose.lookX,
@@ -3989,7 +4011,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           renderer.render(scene, camera);
 
           // ---------- Camera Drone Toàn Cảnh (Góc phải bên dưới - Picture-in-Picture) ----------
-          if (droneCamOnRef.current && dronePipRef.current && phase !== 'podium') {
+          if (!isLow && droneCamOnRef.current && dronePipRef.current && phase !== 'podium') {
             const cRect = container.getBoundingClientRect();
             const pRect = dronePipRef.current.getBoundingClientRect();
             const pw = Math.round(pRect.width);
@@ -4084,7 +4106,10 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
               renderer.setViewport(px, py, pw, ph);
               renderer.setScissor(px, py, pw, ph);
               renderer.clearDepth();
+              const updateShadows = renderer.shadowMap.autoUpdate;
+              renderer.shadowMap.autoUpdate = false;
               renderer.render(scene, droneCamera);
+              renderer.shadowMap.autoUpdate = updateShadows;
               renderer.setScissorTest(false);
               renderer.setViewport(0, 0, cw, ch);
 
@@ -4260,7 +4285,6 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
           sparkSystem.dispose();
           realTimeSky.dispose();
           pmrem.dispose();
-          envTex.dispose();
           renderer.dispose();
         };
       } catch (err: any) {
@@ -4413,7 +4437,7 @@ export const Race3DCanvas: React.FC<Race3DCanvasProps> = ({
         ref={dronePipRef}
         onPointerDown={(e) => startDroneInteract(e, 'move')}
         style={{
-          display: droneCamOn ? 'block' : 'none',
+          display: droneCamOn && graphicsQuality !== 'low' ? 'block' : 'none',
           left: `${droneRect.x}%`,
           top: `${droneRect.y}%`,
           width: `${droneRect.w}%`,
